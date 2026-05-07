@@ -383,8 +383,8 @@ struct MainDashboardView: View {
         /// flip this flag back.
         var isVisibleInSidebar: Bool {
             switch self {
-            case .magicWords, .devMode: return false
-            case .home, .scratchpad, .insights, .runLog, .settings: return true
+            case .devMode: return false
+            case .home, .scratchpad, .insights, .magicWords, .runLog, .settings: return true
             }
         }
     }
@@ -518,14 +518,9 @@ struct MainDashboardView: View {
                 .padding(.top, 4)
 
                 VStack(spacing: 2) {
-                    // Sidebar shows the user-facing tabs only. `magicWords`
-                    // and `devMode` are intentionally hidden — the routes,
-                    // switch arms, and views are still wired so we can
-                    // re-enable them by removing the filter when we come
-                    // back to that work. Keep the cases in the enum so
-                    // NotificationCenter routing ("VoiceFlow.SelectTab"
-                    // → "magicWords") still works for any pinned shortcuts
-                    // or test harnesses.
+                    // Sidebar shows user-facing tabs only. Dev Mode remains
+                    // hidden until the developer tools are ready for normal
+                    // users, but Magic Words is now a first-class setup page.
                     ForEach(Tab.allCases.filter { $0.isVisibleInSidebar }, id: \.self) { tab in
                         sidebarButton(tab)
                     }

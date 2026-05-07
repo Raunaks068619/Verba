@@ -10,6 +10,9 @@ import UniformTypeIdentifiers
 /// An inline list inside the Settings tab balloons the page and pushes other
 /// settings off-screen. Better as a focused surface with import/export.
 struct MagicWordsSettingsView: View {
+    @AppStorage(TransformerRouter.Keys.magicWordsEnabled)
+    private var magicWordsEnabled: Bool = true
+
     @ObservedObject var store: MagicWordStore = .shared
 
     @State private var editing: MagicWord?
@@ -21,10 +24,10 @@ struct MagicWordsSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 18) {
                 header
-                actionsCard
-                listCard
+                voiceActionsPanel
+                customRegistryPanel
             }
             .padding(Theme.Space.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -57,32 +60,234 @@ struct MagicWordsSettingsView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Magic Words")
-                .font(.system(size: 26, weight: .semibold, design: .serif))
-                .foregroundColor(Theme.textPrimary)
-            Text("Voice-triggered text expander. Say the phrase to paste the expansion.")
-                .font(.system(size: 13))
-                .foregroundColor(Theme.textSecondary)
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(Theme.accent)
+                    Text("Magic Words")
+                        .font(.system(size: 28, weight: .semibold, design: .serif))
+                        .foregroundColor(Theme.textPrimary)
+                }
+                Text("Command phrases and custom voice shortcuts in one place.")
+                    .font(.system(size: 13))
+                    .foregroundColor(Theme.textSecondary)
+            }
+
+            Spacer()
+
+            HStack(spacing: 10) {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(magicWordsEnabled ? "Enabled" : "Disabled")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Actions + snippets")
+                        .font(.system(size: 11))
+                        .foregroundColor(Theme.textTertiary)
+                }
+                Toggle("", isOn: $magicWordsEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
+                    .fill(Theme.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
+                    .strokeBorder(Theme.divider, lineWidth: 1)
+            )
         }
     }
 
-    // MARK: - Actions row (search + import/export/add)
+    // MARK: - Voice Actions
 
-    private var actionsCard: some View {
+    private var voiceActionsPanel: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        sectionIcon("sparkles")
+                        Text("Built-in App Actions")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(Theme.textOnDark)
+                    }
+                    Text("Say these directly. VoiceFlow opens the app and, when asked, inserts your text there.")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.textOnDark.opacity(0.72))
+                }
+                Spacer()
+                statusPill(magicWordsEnabled ? "Listening" : "Off",
+                           color: magicWordsEnabled ? Theme.success : Theme.textTertiary)
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 220), spacing: 12)],
+                spacing: 12
+            ) {
+                actionExample(
+                    title: "Open",
+                    phrase: "open Codex",
+                    result: "Launches Codex"
+                )
+                actionExample(
+                    title: "Open + Insert",
+                    phrase: "open Claude and type write a launch plan",
+                    result: "Launches Claude, then pastes the prompt"
+                )
+                actionExample(
+                    title: "Ask",
+                    phrase: "open ChatGPT and ask improve this email",
+                    result: "Opens ChatGPT with your request ready"
+                )
+            }
+
+            Divider()
+                .overlay(Color.white.opacity(0.12))
+
+            HStack(alignment: .top, spacing: 14) {
+                commandReference(
+                    title: "Action words",
+                    items: ["open", "launch", "start"]
+                )
+                commandReference(
+                    title: "Insert words",
+                    items: ["and type", "and paste", "and write", "and enter", "and ask"]
+                )
+                commandReference(
+                    title: "Known aliases",
+                    items: ["Claude / Cloud", "Codex", "ChatGPT", "Chrome", "Cursor", "VS Code", "Terminal", "Slack", "Notes"]
+                )
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous)
+                .fill(Theme.surfaceDark)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .shadow(color: Theme.Shadow.elevated.color,
+                radius: Theme.Shadow.elevated.radius,
+                x: 0, y: Theme.Shadow.elevated.y)
+    }
+
+    private func actionExample(title: String, phrase: String, result: String) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Theme.textOnDark.opacity(0.78))
+                Spacer()
+                Image(systemName: "arrow.up.forward")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(Theme.accent)
+            }
+            Text(phrase)
+                .font(.system(size: 13, weight: .semibold).monospaced())
+                .foregroundColor(Theme.textOnDark)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(result)
+                .font(.system(size: 11))
+                .foregroundColor(Theme.textOnDark.opacity(0.60))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Theme.surfaceDarkSoft)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private func commandReference(title: String, items: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Theme.textOnDark.opacity(0.64))
+            FlowWrap(spacing: 6, rowSpacing: 6) {
+                ForEach(items, id: \.self) { item in
+                    Text(item)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Theme.textOnDark.opacity(0.86))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(Color.white.opacity(0.10)))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func statusPill(_ text: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(text)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Theme.textOnDark)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color.white.opacity(0.12)))
+    }
+
+    private func sectionIcon(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundColor(.white)
+            .frame(width: 24, height: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Theme.accent)
+            )
+    }
+
+    // MARK: - Custom Registry
+
+    private var customRegistryPanel: some View {
         VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        sectionIconLight("text.cursor")
+                        Text("Custom Magic Words")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(Theme.textPrimary)
+                    }
+                    Text("Configure phrase -> expansion shortcuts. Prefix matches append anything you say after the trigger.")
+                        .font(.system(size: 12))
+                        .foregroundColor(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                countPill
+            }
+
             HStack(spacing: 10) {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(Theme.textSecondary)
-                    TextField("Search phrases, expansions, tags…", text: $search)
+                    TextField("Search phrases, expansions, tags...", text: $search)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13))
                         .foregroundColor(Theme.textPrimary)
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.vertical, 9)
                 .background(
                     RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
                         .fill(Theme.surfaceElevated)
@@ -92,7 +297,7 @@ struct MagicWordsSettingsView: View {
                         .strokeBorder(Theme.divider, lineWidth: 1)
                 )
 
-                Spacer()
+                Spacer(minLength: 8)
 
                 secondaryButton(label: "Import", icon: "square.and.arrow.down") {
                     showImporter = true
@@ -104,23 +309,6 @@ struct MagicWordsSettingsView: View {
                 primaryButton(label: "Add", icon: "plus") {
                     showAddSheet = true
                 }
-            }
-        }
-        .themedCard()
-    }
-
-    // MARK: - List
-
-    private var listCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Registry")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Theme.textPrimary)
-                Spacer()
-                Text("\(filteredEntries.count) of \(store.entries.count)")
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.textTertiary)
             }
 
             if filteredEntries.isEmpty {
@@ -138,6 +326,27 @@ struct MagicWordsSettingsView: View {
             }
         }
         .themedCard()
+    }
+
+    private var countPill: some View {
+        Text("\(filteredEntries.count) / \(store.entries.count)")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(Theme.textSecondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Theme.surfaceElevated))
+            .overlay(Capsule().strokeBorder(Theme.divider, lineWidth: 1))
+    }
+
+    private func sectionIconLight(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundColor(.white)
+            .frame(width: 24, height: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Theme.accent)
+            )
     }
 
     // MARK: - Empty state
@@ -339,6 +548,81 @@ struct MagicWordsSettingsView: View {
         case .failure(let err):
             print("Magic Words import failed: \(err)")
         }
+    }
+}
+
+// MARK: - Flow layout
+
+struct FlowWrap: Layout {
+    var spacing: CGFloat = 8
+    var rowSpacing: CGFloat = 8
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let rows = arrangedRows(maxWidth: proposal.width, subviews: subviews)
+        let width = proposal.width ?? rows.map(\.width).max() ?? 0
+        let height = rows.enumerated().reduce(CGFloat.zero) { total, item in
+            total + item.element.height + (item.offset == rows.count - 1 ? 0 : rowSpacing)
+        }
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let rows = arrangedRows(maxWidth: bounds.width, subviews: subviews)
+        var y = bounds.minY
+
+        for row in rows {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y),
+                    proposal: ProposedViewSize(width: size.width, height: size.height)
+                )
+                x += size.width + spacing
+            }
+            y += row.height + rowSpacing
+        }
+    }
+
+    private func arrangedRows(
+        maxWidth proposedWidth: CGFloat?,
+        subviews: Subviews
+    ) -> [(indices: [Int], width: CGFloat, height: CGFloat)] {
+        guard !subviews.isEmpty else { return [] }
+        let maxWidth = max(proposedWidth ?? .greatestFiniteMagnitude, 1)
+        var rows: [(indices: [Int], width: CGFloat, height: CGFloat)] = []
+        var current: [Int] = []
+        var currentWidth: CGFloat = 0
+        var currentHeight: CGFloat = 0
+
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let nextWidth = current.isEmpty ? size.width : currentWidth + spacing + size.width
+            if nextWidth > maxWidth, !current.isEmpty {
+                rows.append((current, currentWidth, currentHeight))
+                current = [index]
+                currentWidth = size.width
+                currentHeight = size.height
+            } else {
+                current.append(index)
+                currentWidth = nextWidth
+                currentHeight = max(currentHeight, size.height)
+            }
+        }
+
+        if !current.isEmpty {
+            rows.append((current, currentWidth, currentHeight))
+        }
+        return rows
     }
 }
 
