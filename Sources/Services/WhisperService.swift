@@ -1235,7 +1235,10 @@ class WhisperService {
         ]
         let outLower = out.lowercased()
         for prefix in chatReplyPrefixes {
-            if outLower.hasPrefix(prefix) { return true }
+            if outLower.hasPrefix(prefix),
+               !Self.inputAlreadyStartedWithChatPrefix(input, prefix: prefix) {
+                return true
+            }
         }
 
         // Pre-polish blocklist still applies to post-polish output.
@@ -1268,6 +1271,35 @@ class WhisperService {
         }
 
         return false
+    }
+
+    private static func inputAlreadyStartedWithChatPrefix(_ input: String, prefix: String) -> Bool {
+        var normalized = input
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet.punctuationCharacters)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+
+        let leadingFillers = [
+            "and ",
+            "so ",
+            "well ",
+            "okay ",
+            "ok ",
+            "like ",
+            "actually ",
+            "basically "
+        ]
+        var changed = true
+        while changed {
+            changed = false
+            for filler in leadingFillers where normalized.hasPrefix(filler) {
+                normalized = String(normalized.dropFirst(filler.count)).trimmingCharacters(in: .whitespaces)
+                changed = true
+            }
+        }
+
+        return normalized.hasPrefix(prefix)
     }
 
     /// Detect structural tells of an LLM chatbot response: markdown, code

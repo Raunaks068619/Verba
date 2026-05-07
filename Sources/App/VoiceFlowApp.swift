@@ -1351,6 +1351,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             print("Empty transcript (likely hallucination-filtered); nothing to inject.")
+            floatingChip?.flashNoOutputWarning(durationSeconds: 4.0)
             return
         }
         self.textInjector?.injectText(trimmed)

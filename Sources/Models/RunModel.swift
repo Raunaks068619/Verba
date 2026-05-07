@@ -104,9 +104,14 @@ struct Run: Codable, Identifiable {
     /// length: rows that want a one-liner can apply `.lineLimit(1)` at the
     /// view layer; rows that want full text just don't.
     var previewText: String {
-        let source = postProcessing?.finalText ?? transcription?.rawText ?? ""
-        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed }
+        if let final = postProcessing?.finalText.trimmingCharacters(in: .whitespacesAndNewlines),
+           !final.isEmpty {
+            return final
+        }
+        if let raw = transcription?.rawText.trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty {
+            return raw
+        }
         if status == .failed, let msg = errorMessage, !msg.isEmpty {
             return "⚠︎ " + msg
         }

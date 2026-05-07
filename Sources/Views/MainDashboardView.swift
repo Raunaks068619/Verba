@@ -2274,7 +2274,7 @@ final class FocusDetector {
 /// Hover behavior: in `.idle`, hovering reveals a small gear button on the
 /// right. Click → opens Settings. Other states ignore hover.
 final class FloatingChipModel: ObservableObject {
-    enum ChipState: Equatable { case idle, recording, processing, noInputWarning, permissionsMissing, noAudioWarning }
+    enum ChipState: Equatable { case idle, recording, processing, noInputWarning, permissionsMissing, noAudioWarning, noOutputWarning }
 
     @Published var state: ChipState = .idle
     /// Live mic amplitude during `.recording`. 0...1, normalized.
@@ -2469,6 +2469,25 @@ final class FloatingChipWindow: NSPanel {
         }
     }
 
+    /// Fires when STT captured speech but post-processing returned an empty
+    /// final output. This is different from "quiet mic": the audio exists,
+    /// but a guard/model path filtered it. Click opens Run Log for diagnosis.
+    func flashNoOutputWarning(durationSeconds: Double = 4.0) {
+        DispatchQueue.main.async { [weak self] in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                self?.model.state = .noOutputWarning
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + durationSeconds) { [weak self] in
+            guard let self = self else { return }
+            if self.model.state == .noOutputWarning {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    self.model.state = .idle
+                }
+            }
+        }
+    }
+
     /// Push live audio amplitude (0...1). Safe from any thread.
     func updateAudioLevel(_ level: Float) {
         if Thread.isMainThread {
@@ -2632,7 +2651,50 @@ struct FloatingChipView: View {
             permissionsWarningChip
         case .noAudioWarning:
             noAudioWarningChip
+        case .noOutputWarning:
+            noOutputWarningChip
         }
+    }
+
+    private var noOutputWarningChip: some View {
+        Button {
+            NotificationCenter.default.post(
+                name: Notification.Name("VoiceFlow.OpenRunLog"),
+                object: nil
+            )
+        } label: {
+            HStack(spacing: 10) {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("Filtered")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .foregroundColor(Color(red: 1.0, green: 0.85, blue: 0.55))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule().fill(Color.white.opacity(0.14))
+                )
+
+                Text("No output generated — check Run Log")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white.opacity(0.55))
+                    .frame(width: 18, height: 18)
+                    .background(Circle().fill(Color.white.opacity(0.10)))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .chipGlass()
+        }
+        .buttonStyle(.plain)
+        .help("Open Run Log")
     }
 
     /// Shown when fn was held but no audio crossed the noise gate. The
@@ -3744,7 +3806,7 @@ struct ScratchpadView: View {
             }
             if latest.id != lastSeenRunId {
                 let incoming = latest.previewText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !incoming.isEmpty {
+                if latest.status == .success, !incoming.isEmpty {
                     if text.isEmpty {
                         text = incoming
                     } else {
