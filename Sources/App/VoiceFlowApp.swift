@@ -673,10 +673,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return .terminateNow
         }
 
+        // User-initiated Cmd+Q.
         if let event = NSApp.currentEvent,
            event.type == .keyDown,
            event.modifierFlags.contains(.command),
            event.charactersIgnoringModifiers?.lowercased() == "q" {
+            return .terminateNow
+        }
+
+        // System-initiated quit. macOS sends kAEQuitApplication when:
+        //   - The user clicks "Quit & Reopen" in the TCC dialog after
+        //     granting Input Monitoring / Accessibility (the system needs
+        //     us dead before the new permission takes effect).
+        //   - Activity Monitor → Quit.
+        //   - AppleScript: `tell application "VoiceFlow" to quit`.
+        //   - shutdown / logout / reboot.
+        // All of these are legitimate quits we should honor.
+        //
+        // Without this branch, "Quit & Reopen" silently fails — the dialog
+        // closes, the user expects the app to relaunch with new permissions,
+        // but the old process keeps running and the new permission stays
+        // ungranted at runtime until they kill the app manually.
+        if let appleEvent = NSAppleEventManager.shared().currentAppleEvent,
+           appleEvent.eventClass == AEEventClass(kCoreEventClass),
+           appleEvent.eventID == AEEventID(kAEQuitApplication) {
+            print("System Apple Event quit (kAEQuitApplication) — terminating")
             return .terminateNow
         }
 
