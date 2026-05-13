@@ -40,6 +40,16 @@ struct KnowledgeGraphView: View {
     @State private var pan: CGSize = .zero
     @GestureState private var dragPan: CGSize = .zero
 
+    /// Pinch/scroll zoom. Bounded to a sane range so the graph never
+    /// disappears off-screen or becomes pixel-mush.
+    @State private var zoom: CGFloat = 1.0
+
+    /// Which node, if any, is currently being dragged by the user. Used
+    /// to suppress the canvas pan gesture during node drag — without
+    /// this both gestures fight for the same finger movement and the
+    /// node lurches alongside the entire view.
+    @State private var activeDragNodeID: String? = nil
+
     var body: some View {
         HStack(spacing: 0) {
             graphPane
@@ -152,17 +162,26 @@ struct KnowledgeGraphView: View {
         GeometryReader { proxy in
             let size = proxy.size
             ZStack {
+                // Background — covers the rounded-card frame AND
+                // serves as the pan/zoom hit target. Sits at the back
+                // of the ZStack so per-node drag overlays receive
+                // events first (SwiftUI hit-tests top-down).
                 RoundedRectangle(cornerRadius: Theme.Radius.card)
                     .fill(Theme.surface)
                     .overlay(
                         RoundedRectangle(cornerRadius: Theme.Radius.card)
                             .strokeBorder(Theme.divider, lineWidth: 1)
                     )
+                    .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+                    .gesture(panGesture, including: activeDragNodeID == nil ? .all : .subviews)
+                    .onTapGesture(count: 2) {
+                        pan = .zero
+                        zoom = 1.0
+                    }
 
-                // Canvas draws edges as lines and node dots/labels in a
-                // single pass — much cheaper than overlaying SwiftUI
-                // views per node. Interactivity (drag, hover) lives on
-                // separate overlay views.
+                // Canvas draws edges + nodes + labels every frame.
+                // `allowsHitTesting(false)` so it never blocks the
+                // per-node drag overlays layered on top.
                 TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { _ in
                     Canvas { ctx, _ in
                         simulation.tick(in: size)
@@ -170,41 +189,54 @@ struct KnowledgeGraphView: View {
                         drawNodes(in: ctx, size: size)
                     }
                 }
+                .allowsHitTesting(false)
 
-                // Overlay interactive node "pads" — small invisible
-                // tap/drag targets at each node position. SwiftUI Canvas
-                // doesn't support hit-testing so we layer this on top.
+                // Per-node drag pads. Larger hit area (min 32pt) so
+                // the slim 6pt nodes are easy to grab. Gesture is
+                // `.highPriorityGesture` so it wins races against
+                // the canvas pan gesture below.
                 ForEach(simulation.bodies, id: \.id) { body in
                     let p = displayPoint(body.position, size: size)
+                    let hit: CGFloat = max(32, body.radius * 2 + 18)
                     Circle()
-                        .fill(Color.clear)
-                        .frame(width: max(24, body.radius * 2 + 12),
-                               height: max(24, body.radius * 2 + 12))
-                        .contentShape(Circle())
+                        .fill(Color.white.opacity(0.001)) // hit-testable but invisible
+                        .frame(width: hit, height: hit)
                         .position(p)
                         .onHover { hovering in
                             simulation.setHover(body.id, hovering: hovering)
                         }
-                        .gesture(
-                            DragGesture(minimumDistance: 1)
+                        .highPriorityGesture(
+                            DragGesture(minimumDistance: 0, coordinateSpace: .local)
                                 .onChanged { v in
-                                    simulation.beginDrag(body.id)
-                                    let translatedX = body.position.x + v.translation.width
-                                    let translatedY = body.position.y + v.translation.height
-                                    simulation.dragTo(body.id, point: CGPoint(x: translatedX, y: translatedY))
+                                    if activeDragNodeID != body.id {
+                                        activeDragNodeID = body.id
+                                        simulation.beginDrag(body.id)
+                                    }
+                                    // Convert display-space drag back to
+                                    // simulation-space (cancel pan + zoom).
+                                    let target = CGPoint(
+                                        x: body.position.x + v.translation.width  / zoom,
+                                        y: body.position.y + v.translation.height / zoom
+                                    )
+                                    simulation.dragTo(body.id, point: target)
                                 }
                                 .onEnded { _ in
                                     simulation.endDrag(body.id)
+                                    activeDragNodeID = nil
                                 }
                         )
                         .help(tooltipFor(body.id))
                 }
             }
-            .contentShape(Rectangle())
-            .gesture(panGesture)
-            .onTapGesture(count: 2) {
-                pan = .zero
-            }
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+            // Scroll-wheel zoom. Trackpad pinch arrives as a
+            // .magnification gesture on macOS — handle that too.
+            .gesture(
+                MagnificationGesture()
+                    .onChanged { value in
+                        zoom = max(0.4, min(2.5, value))
+                    }
+            )
         }
     }
 
@@ -220,9 +252,15 @@ struct KnowledgeGraphView: View {
     }
 
     private func displayPoint(_ p: CGPoint, size: CGSize) -> CGPoint {
-        CGPoint(
-            x: p.x + pan.width + dragPan.width,
-            y: p.y + pan.height + dragPan.height
+        // Simulation runs in raw coords centered around `size/2`. Display
+        // pipeline: re-center → apply zoom around center → apply pan.
+        let cx = size.width  / 2
+        let cy = size.height / 2
+        let zoomedX = (p.x - cx) * zoom + cx
+        let zoomedY = (p.y - cy) * zoom + cy
+        return CGPoint(
+            x: zoomedX + pan.width  + dragPan.width,
+            y: zoomedY + pan.height + dragPan.height
         )
     }
 
@@ -259,7 +297,11 @@ struct KnowledgeGraphView: View {
             // Node circle. Hovered or run-highlighted nodes get a
             // brighter ring + larger glow.
             let highlighted = body.isHovered || isRunHighlighted(body.runIDs)
-            let radius = body.radius * (highlighted ? 1.15 : 1.0)
+            // Apply zoom to the rendered radius so nodes scale with
+            // the rest of the layout. Floor at 8pt so they stay
+            // grabbable at any zoom level.
+            let baseRadius = body.radius * (highlighted ? 1.18 : 1.0)
+            let radius = max(8, baseRadius * zoom)
             let rect = CGRect(
                 x: p.x - radius,
                 y: p.y - radius,
@@ -269,27 +311,42 @@ struct KnowledgeGraphView: View {
             // Soft glow halo on highlighted nodes.
             if highlighted {
                 let glowRect = rect.insetBy(dx: -6, dy: -6)
-                ctx.fill(Path(ellipseIn: glowRect), with: .color(fill.opacity(0.18)))
+                ctx.fill(Path(ellipseIn: glowRect), with: .color(fill.opacity(0.22)))
             }
             ctx.fill(Path(ellipseIn: rect), with: .color(fill))
             ctx.stroke(
                 Path(ellipseIn: rect),
-                with: .color(.white.opacity(highlighted ? 0.85 : 0.45)),
-                lineWidth: highlighted ? 1.4 : 0.8
+                with: .color(.white.opacity(highlighted ? 0.9 : 0.55)),
+                lineWidth: highlighted ? 1.6 : 1.0
             )
 
-            // Label — only for nodes with ≥2 mentions OR hovered, to
-            // avoid label crowding in dense graphs.
-            if body.mentions >= 2 || highlighted {
-                let text = Text(body.label)
-                    .font(.system(size: 10, weight: highlighted ? .semibold : .medium))
-                    .foregroundColor(Theme.textPrimary.opacity(highlighted ? 1.0 : 0.78))
-                ctx.draw(
-                    text,
-                    at: CGPoint(x: p.x, y: p.y + radius + 10),
-                    anchor: .center
-                )
-            }
+            // Label — ALWAYS shown (v0.5.1). The previous behavior
+            // gated labels behind mentions≥2, which left small graphs
+            // looking like anonymous dots. The label-pill background
+            // gives readability without crowding even when nodes overlap.
+            let labelText = Text(body.label)
+                .font(.system(size: 11, weight: highlighted ? .semibold : .medium))
+                .foregroundColor(Theme.textPrimary)
+            let labelAt = CGPoint(x: p.x, y: p.y + radius + 12)
+            // Pill background — measure first, then draw fill + text.
+            let resolved = ctx.resolve(labelText)
+            let textSize = resolved.measure(in: CGSize(width: 200, height: 40))
+            let padX: CGFloat = 6
+            let padY: CGFloat = 2
+            let pillRect = CGRect(
+                x: labelAt.x - textSize.width / 2 - padX,
+                y: labelAt.y - textSize.height / 2 - padY,
+                width: textSize.width + padX * 2,
+                height: textSize.height + padY * 2
+            )
+            let pillPath = Path(roundedRect: pillRect, cornerRadius: 4)
+            ctx.fill(pillPath, with: .color(Theme.surface.opacity(0.92)))
+            ctx.stroke(
+                pillPath,
+                with: .color(Theme.divider),
+                lineWidth: 0.5
+            )
+            ctx.draw(resolved, at: labelAt, anchor: .center)
         }
     }
 
@@ -743,7 +800,10 @@ final class ForceSimulation: ObservableObject {
 
     private static func radius(forMentions mentions: Int) -> CGFloat {
         // Logarithmic scaling so a few high-mention nodes don't dominate.
-        let base: CGFloat = 6
-        return base + min(12, CGFloat(log(Double(max(1, mentions))) * 4))
+        // Base bumped 6 → 9 in v0.5.1: a 6pt dot at 1.0 zoom is barely
+        // visible and hard to grab. 9pt reads cleanly and stays
+        // grabbable down to ~0.5 zoom (where it renders as ~5pt).
+        let base: CGFloat = 9
+        return base + min(14, CGFloat(log(Double(max(1, mentions))) * 4))
     }
 }

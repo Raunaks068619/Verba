@@ -27,34 +27,26 @@ final class RunStore: ObservableObject {
     private let decoder = JSONDecoder()
     private let queue = DispatchQueue(label: "com.voiceflow.runstore", qos: .utility)
 
-    /// Maximum retained runs, or nil for unlimited.
+    /// Maximum retained runs. Always `nil` — capping is permanently
+    /// disabled.
     ///
-    /// The cap is a two-part knob: `isCapEnabled` (user toggle, default OFF)
-    /// gates whether any cap applies at all; `run_log_max_count` sets the
-    /// actual ceiling when enabled (default 200). Returning nil means the
-    /// ring-buffer trim is skipped entirely — history grows until the user
-    /// clears it.
+    /// **History note**: pre-v0.5.0 capped history at 20 runs. v0.5.0
+    /// flipped the *default* off, but existing users had
+    /// `run_log_cap_enabled = true` baked into their UserDefaults
+    /// from the first launch, so the new default never applied. This
+    /// hard-codes the answer: no cap, ever. Users who care about disk
+    /// usage can purge from Settings → Run Log.
     ///
-    /// **Default flipped to OFF**: the old behavior silently capped history
-    /// at 20 runs, which surprised users who expected `Memory` / `Insights`
-    /// to keep building over time. Users who explicitly enabled the cap
-    /// still keep their preference; only the implicit "I never touched
-    /// this setting" path changed.
-    var maxRuns: Int? {
-        guard isCapEnabled else { return nil }
-        let stored = UserDefaults.standard.integer(forKey: "run_log_max_count")
-        return stored > 0 ? stored : 200
-    }
+    /// Why this matters: Insights' user-type classifier needs ≥20
+    /// substantive runs to unlock, Memory needs the full corpus to
+    /// build a useful graph, and Run Log itself is the audit trail.
+    /// Silently throwing away history defeats all three.
+    var maxRuns: Int? { nil }
 
-    /// Whether retention is capped at all. Default OFF — most users want
-    /// their full transcription history preserved (feeds Insights +
-    /// Memory tab). Users who care about disk usage can toggle it back
-    /// on in Settings.
-    var isCapEnabled: Bool {
-        let key = "run_log_cap_enabled"
-        if UserDefaults.standard.object(forKey: key) == nil { return false }
-        return UserDefaults.standard.bool(forKey: key)
-    }
+    /// Cap enablement flag — preserved for backwards source compatibility
+    /// (Settings UI still binds against it) but the value is fixed at
+    /// `false`. Reads to UserDefaults are bypassed entirely.
+    var isCapEnabled: Bool { false }
 
     var isEnabled: Bool {
         // Default ON — user can toggle off in settings.

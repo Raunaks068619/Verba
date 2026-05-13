@@ -222,9 +222,21 @@ final class KnowledgeGraphService: ObservableObject {
         }
     }
 
-    /// Answer a question over the user's transcription history. Uses
-    /// keyword-overlap retrieval to find relevant transcripts, then
-    /// asks the user's chosen polish backend for the answer.
+    /// Answer a question over the user's transcription history.
+    ///
+    /// **Retrieval pipeline** (three layers, each compensates for the
+    /// failure mode of the previous):
+    ///   1. Entity match — if the question mentions any known node
+    ///      label, pull transcripts from that node's runIDs. This is
+    ///      the strongest signal we have because it leverages the LLM
+    ///      extraction work already done at graph-build time.
+    ///   2. Keyword overlap — token intersection between question and
+    ///      transcript, stopwords removed.
+    ///   3. Recency fallback — if 1+2 produce nothing, return the 5
+    ///      most-recent substantive transcripts so the LLM still has
+    ///      something to summarize. Vague questions like "what was I
+    ///      working on?" land here, which is exactly what they should:
+    ///      "here's the recent stuff."
     func ask(_ question: String) async throws -> KnowledgeChatTurn {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else {
@@ -235,48 +247,119 @@ final class KnowledgeGraphService: ObservableObject {
             )
         }
 
-        // Retrieve top-K transcripts by keyword overlap with the
-        // question. Returns (runID, text, score) tuples.
         let allSummaries = runStore.summaries
-        let scored: [(summary: RunSummary, text: String, score: Int)] = allSummaries
-            .compactMap { summary -> (summary: RunSummary, text: String, score: Int)? in
-                guard let run = runStore.loadRun(id: summary.id) else { return nil }
-                let text = run.postProcessing?.finalText
-                    ?? run.transcription?.rawText
-                    ?? summary.previewText
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return nil }
-                let score = Self.keywordOverlapScore(question: q, text: trimmed)
-                return score > 0 ? (summary: summary, text: trimmed, score: score) : nil
-            }
-            .sorted { $0.score > $1.score }
-            .prefix(retrievalK)
-            .map { $0 }
-
-        if scored.isEmpty {
+        guard !allSummaries.isEmpty else {
             return KnowledgeChatTurn(
                 role: .assistant,
-                text: "I couldn't find any past transcriptions relevant to that question yet. Try dictating something on this topic first.",
+                text: "You haven't dictated anything yet. Hold Fn and speak, then come back here and ask away.",
                 sourceRunIDs: []
             )
         }
 
+        // Load+materialize transcripts once. Reading run.json on disk
+        // is cheap (each file is <50KB) and we'd hit it anyway for the
+        // selected hits — loading all upfront simplifies the scoring
+        // pass at negligible cost for the typical <500-run library.
+        struct Materialized {
+            let summary: RunSummary
+            let text: String
+            var score: Int
+        }
+        let materialized: [Materialized] = allSummaries.compactMap { summary in
+            guard let run = runStore.loadRun(id: summary.id) else { return nil }
+            let raw = run.postProcessing?.finalText
+                ?? run.transcription?.rawText
+                ?? summary.previewText
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return Materialized(summary: summary, text: trimmed, score: 0)
+        }
+        guard !materialized.isEmpty else {
+            return KnowledgeChatTurn(
+                role: .assistant,
+                text: "Your transcript history is empty — try dictating something first.",
+                sourceRunIDs: []
+            )
+        }
+
+        // 1. Entity match — bump score for every node label that
+        //    appears in the question. Each matched entity also
+        //    contributes its runIDs as "definitely include these"
+        //    candidates.
+        let qLower = q.lowercased()
+        var entityBoostedRunIDs: Set<String> = []
+        for node in graph.nodes {
+            let label = node.label.lowercased()
+            guard label.count >= 3 else { continue }
+            if qLower.contains(label) {
+                for runID in node.runIDs {
+                    entityBoostedRunIDs.insert(runID)
+                }
+            }
+        }
+
+        // 2. Keyword overlap + entity boost. Score is the keyword
+        //    overlap count, plus +5 if this run was named by an
+        //    entity match in the question. The +5 is calibrated so a
+        //    single entity hit beats noisy token-overlap matches but
+        //    a strong text match (5+ shared tokens) still ranks above
+        //    a weak entity match.
+        var scored = materialized
+        for i in 0..<scored.count {
+            var s = scored[i]
+            s.score = Self.keywordOverlapScore(question: q, text: s.text)
+            if entityBoostedRunIDs.contains(s.summary.id.uuidString) {
+                s.score += 5
+            }
+            scored[i] = s
+        }
+
+        // 3. Pick the top-K with score > 0. If nothing scored, fall
+        //    back to the K most-recent — better to summarize the
+        //    recent corpus than to refuse the question.
+        let positive = scored
+            .filter { $0.score > 0 }
+            .sorted { $0.score > $1.score }
+            .prefix(retrievalK)
+
+        let usedRecencyFallback: Bool
+        let hits: [Materialized]
+        if positive.isEmpty {
+            hits = scored
+                .sorted { $0.summary.createdAt > $1.summary.createdAt }
+                .prefix(retrievalK)
+                .map { $0 }
+            usedRecencyFallback = true
+        } else {
+            hits = Array(positive)
+            usedRecencyFallback = false
+        }
+
         // Build the LLM prompt. Sources are numbered so the model can
         // reference them in the answer.
-        let context = scored.enumerated().map { (idx, hit) -> String in
+        let context = hits.enumerated().map { (idx, hit) -> String in
             let dateStr = DateFormatter.kgShort.string(from: hit.summary.createdAt)
             let body = hit.text.prefix(600)
             return "[Source \(idx + 1) · \(dateStr)]\n\(body)"
         }.joined(separator: "\n\n---\n\n")
 
-        let systemPrompt = """
-        You are VoiceFlow's memory assistant. You answer the user's questions \
-        using ONLY the transcripts provided below. If the answer isn't \
-        in the transcripts, say so honestly — do NOT invent. Cite sources \
-        inline as "[1]", "[2]" etc. matching the source numbers.
+        // Stronger system prompt when we used the recency fallback —
+        // we want the model to acknowledge it's summarizing recent
+        // work rather than directly answering, which prevents
+        // hallucinated "yes I did X" responses to vague questions.
+        let retrievalNote = usedRecencyFallback
+            ? "Note: the user's question didn't match specific transcripts. The sources below are simply the most recent dictations. Give a brief summary of what they appear to be about — don't pretend to directly answer."
+            : "Answer the user's question using ONLY the transcripts. Be specific, cite sources inline as [1], [2] etc."
 
-        Keep answers short (2-4 sentences) unless the user explicitly asks \
-        for detail.
+        let systemPrompt = """
+        You are VoiceFlow's memory assistant. You help the user recall \
+        what they've dictated.
+
+        \(retrievalNote)
+
+        If the transcripts don't contain enough to answer, say so honestly \
+        — never invent details. Keep responses to 2-4 sentences unless the \
+        user explicitly asks for more detail.
         """
 
         let userPrompt = """
@@ -303,7 +386,7 @@ final class KnowledgeGraphService: ObservableObject {
             text: response.content.isEmpty
                 ? "(no answer returned)"
                 : response.content,
-            sourceRunIDs: scored.map { $0.summary.id.uuidString }
+            sourceRunIDs: hits.map { $0.summary.id.uuidString }
         )
     }
 

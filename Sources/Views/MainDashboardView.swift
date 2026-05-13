@@ -1119,27 +1119,14 @@ struct MainDashboardView: View {
                         }
                 }
 
-                // Sub-toggle: cap on/off. Disabled when the parent toggle is
-                // off — no point capping a log that isn't being written.
-                HStack {
-                    Text("Cap at 20 runs")
-                        .font(.subheadline)
-                        .foregroundColor(runLogEnabled ? .primary : .secondary)
-                    Spacer()
-                    Toggle("", isOn: $runLogCapped)
-                        .labelsHidden()
-                        .disabled(!runLogEnabled)
-                        .onChange(of: runLogCapped) { newValue in
-                            UserDefaults.standard.set(newValue, forKey: "run_log_cap_enabled")
-                            // Toggling the cap ON with an over-cap history
-                            // should feel immediate. Without this, excess
-                            // entries linger until the next save() triggers
-                            // the ring-buffer trim.
-                            if newValue {
-                                RunStore.shared.applyCap()
-                            }
-                        }
-                }
+                // Cap sub-toggle was here. Removed in v0.5.1 — retention is
+                // now unconditionally unlimited. The setting confused users
+                // (most never realized history was getting trimmed at 20)
+                // and the UI lied if RunStore.maxRuns disagreed.
+                //
+                // `runLogCapped` @State stays in MainDashboardView for source
+                // compatibility with anything that still binds against it
+                // but is otherwise inert.
 
                 Text(runLogCaptionText)
                     .font(.caption)
@@ -1149,17 +1136,14 @@ struct MainDashboardView: View {
         }
     }
 
-    /// Contextual caption — explains what the current toggle combination
-    /// actually does. Cheaper to read than a static "Last 20 runs are kept"
-    /// when the cap can be off.
+    /// Contextual caption — explains what Run Log does. Since v0.5.1 the
+    /// retention cap is gone, so we no longer need to handle capped vs.
+    /// uncapped phrasing.
     private var runLogCaptionText: String {
         if !runLogEnabled {
             return "Run history is off. No audio, transcripts, or prompts are saved to disk."
         }
-        if runLogCapped {
-            return "Save audio, transcripts, and prompts locally for each dictation. Last 20 runs are kept; nothing leaves your Mac."
-        }
-        return "Save audio, transcripts, and prompts locally for each dictation. No cap — history grows until you clear it manually."
+        return "Save audio, transcripts, and prompts locally for each dictation. Nothing leaves your Mac. History grows until you clear it from the Run Log tab."
     }
 
     /// Sensitivity = inverse of the noise gate threshold. We want the
@@ -2362,14 +2346,20 @@ fileprivate final class ChipHostingView: NSHostingView<FloatingChipView> {
         // pass-through behavior activates on the next layout pass.
         if bounds == .zero { return super.hitTest(point) }
 
-        // `point` arrives in the SUPERVIEW's coord system. For an NSPanel
-        // contentView, that's the window's bottom-left coord system.
-        // SwiftUI published the bounds in top-left origin space — flip
-        // Y around our height to compare.
-        let viewLocal = self.convert(point, from: self.superview)
-        let flippedY = self.bounds.height - viewLocal.y
-        let swiftUIPoint = CGPoint(x: viewLocal.x, y: flippedY)
-        if !bounds.contains(swiftUIPoint) {
+        // **Coordinate-space note (this was a bug in v0.5.0)**:
+        // `NSHostingView` overrides `isFlipped` to `true` for SwiftUI
+        // content. That means AppKit's `convert(_:from:)` already
+        // delivers the point in top-left coords — the SAME system the
+        // SwiftUI GeometryReader used to publish `chipHitBounds`.
+        //
+        // v0.5.0 then flipped Y again as if NSHostingView were standard
+        // bottom-left. That double flip mirrored the hit zone vertically,
+        // producing the "I can't click NEAR the chip but I can click
+        // 200px AWAY from it" behavior you saw.
+        //
+        // No flip needed — both rects live in SwiftUI's top-left space.
+        let local = self.convert(point, from: self.superview)
+        if !bounds.contains(local) {
             return nil
         }
         return super.hitTest(point)
