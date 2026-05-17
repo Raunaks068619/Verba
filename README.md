@@ -1,106 +1,226 @@
 # 🎙️ VoiceFlow
 
-VoiceFlow is a macOS menu-bar voice typing app inspired by Freeflow workflows.
+> [!IMPORTANT]
+> ### `v0.6.0` is here — Memory that works.
+>
+> VoiceFlow is a macOS menu-bar voice typing app for people who think faster
+> than they type. Hold `Fn`, speak naturally, release, and your words land in
+> the focused app as clean text.
+>
+> → [**Download the latest DMG**](https://github.com/Raunaks068619/VoiceFlow/releases/latest) · [Install with Homebrew](#-quickstart) · [Fix permissions](#-permissions)
 
-## ✨ Highlights
+> **The local-first voice typing app for macOS.** Fast English dictation on the
+> free Groq path, multilingual/Hinglish workflows with your OpenAI key, local
+> run logs for every dictation, Magic Words for spoken commands, and a Memory
+> graph that turns past transcripts into searchable context.
 
-- Hold a hotkey to record, release to transcribe
-- Smart output modes: `Verbatim`, `Clean`, `Clean + Hinglish`
-- `Dictation` vs `Rewrite` mode
-- Background-noise filtering
-- Paste-based insertion for stable typing
+<p align="center">
+  <a href="https://github.com/Raunaks068619/VoiceFlow/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=ffd700&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/VoiceFlow/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=2ecc71&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/VoiceFlow/issues"><img alt="Issues" src="https://img.shields.io/github/issues/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=ff6b6b&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/VoiceFlow/pulls"><img alt="Pull Requests" src="https://img.shields.io/github/issues-pr/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=9b59b6&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/VoiceFlow/graphs/contributors"><img alt="Contributors" src="https://img.shields.io/github/contributors/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=3498db&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/VoiceFlow/commits/main"><img alt="Commit activity" src="https://img.shields.io/github/commit-activity/m/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=e67e22&logo=git&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/VoiceFlow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=8e44ad&logo=git&logoColor=white" /></a>
+</p>
 
-## 🖼️ Product Showcase
+<p align="center">
+  <a href="https://github.com/Raunaks068619/VoiceFlow/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-latest%20DMG-ff6b35?style=flat-square&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/VoiceFlow/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/Raunaks068619/VoiceFlow?style=flat-square&color=blueviolet&label=release&display_name=tag" /></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" /></a>
+  <a href="#-quickstart"><img alt="Quickstart" src="https://img.shields.io/badge/quickstart-brew%20install-brightgreen?style=flat-square" /></a>
+  <a href="#-permissions"><img alt="Permissions" src="https://img.shields.io/badge/permissions-mic%20%2B%20accessibility%20%2B%20input%20monitoring-111111?style=flat-square&logo=apple&logoColor=white" /></a>
+  <a href="#-at-a-glance"><img alt="Platform" src="https://img.shields.io/badge/platform-macOS%2013%2B-111111?style=flat-square&logo=apple&logoColor=white" /></a>
+  <a href="#-at-a-glance"><img alt="Language" src="https://img.shields.io/badge/language-Swift-f05138?style=flat-square&logo=swift&logoColor=white" /></a>
+  <a href="#-transcription-pipeline"><img alt="Providers" src="https://img.shields.io/badge/providers-Groq%20%2B%20OpenAI%20%2B%20local-008080?style=flat-square" /></a>
+  <a href="#-hotkeys"><img alt="Hotkeys" src="https://img.shields.io/badge/hotkeys-Fn%20%2F%20Right%20Option-3498db?style=flat-square" /></a>
+  <a href="#-output-modes"><img alt="Output modes" src="https://img.shields.io/badge/output-4%20modes-8e44ad?style=flat-square" /></a>
+</p>
 
-### Menu Bar Popover
-<img width="299" height="323" alt="VoiceFlow Menu" src="https://github.com/user-attachments/assets/ebc1b997-a68b-48a8-947c-ec3a7d0255bd" />
+---
 
-### Settings (General)
-<img width="471" height="522" alt="VoiceFlow Settings" src="https://github.com/user-attachments/assets/b404a794-d1c3-42d9-a53b-af5d75ef8db9" />
+## 🧭 Why this exists
 
-### Settings (Advanced)
-<img width="472" height="524" alt="VoiceFlow Advanced Settings" src="https://github.com/user-attachments/assets/d4e89312-a0c6-4f2b-a536-d4c1a18a1296" />
+macOS dictation is fine until you need real workflow speed: a global hotkey,
+cleanup that respects intent, bilingual output, reliable insertion, and a way
+to debug what the model actually heard.
 
-### Onboarding Flow
-<img width="521" height="450" alt="VoiceFlow Onboarding" src="https://github.com/user-attachments/assets/b87bebd1-1d53-4f86-a7ca-bf342eeacdda" />
+VoiceFlow is built for that gap:
 
-### English Transcription Example
-<img width="764" height="756" alt="English Transcription Example" src="https://github.com/user-attachments/assets/41bb65bd-d3f4-45d5-9410-030d93679b4b" />
+- **Speak anywhere** — Slack, Cursor, Notes, Mail, browser fields, terminals.
+- **Choose the output** — raw transcript, cleaned text, Hinglish, or English translation.
+- **Keep the receipts** — run logs save audio, raw STT, prompts, final text, timing, and errors locally.
+- **Command the app by voice** — Magic Words turn phrases into repeatable actions.
+- **Remember the work** — Memory indexes past runs into a graph and chat surface.
 
-### Hindi + English (Hinglish) Example
-<img width="700" height="737" alt="Hindi English Hinglish Example" src="https://github.com/user-attachments/assets/9da697fd-1575-49cc-b339-2396dfd0c1f4" />
+## ⚡ At a glance
 
-## 🧰 Requirements
+| | What you get |
+|---|---|
+| **Trigger** | Hold `Fn` anywhere on macOS, speak, release to type into the active app. |
+| **Fallback hotkey** | `Right Option` when the `Fn` / globe key is owned by macOS. |
+| **Transcription** | Groq for fast English dictation; OpenAI for multilingual and Hinglish workflows. |
+| **Polish** | Groq, OpenAI, LM Studio, or Ollama through OpenAI-compatible chat endpoints. |
+| **Output modes** | `Verbatim`, `Clean`, `Hinglish`, and `English` translation. |
+| **Processing modes** | `Dictation` preserves phrasing; `Rewrite` tightens final intent. |
+| **Run Log** | Local audit trail for audio, raw text, final text, prompts, model, latency, and errors. |
+| **Memory** | Knowledge graph and chat over past dictations. |
+| **Magic Words** | Spoken command aliases with editable triggers. |
+| **Packaging** | Homebrew cask, unsigned DMG, and signed/notarized release script support. |
+| **Platform** | macOS 13+, SwiftUI + AppKit, menu-bar app with no Dock icon by design. |
 
-- macOS 13+
-- Xcode 15+
-- OpenAI API key
+## 🖼️ Demo
 
-## 🚀 Run Locally
+<table>
+<tr>
+<td width="50%" valign="top">
+<img width="299" alt="VoiceFlow menu bar popover" src="https://github.com/user-attachments/assets/ebc1b997-a68b-48a8-947c-ec3a7d0255bd" /><br/>
+<sub><b>Menu bar popover</b> — lightweight control surface for recording and status.</sub>
+</td>
+<td width="50%" valign="top">
+<img width="471" alt="VoiceFlow settings" src="https://github.com/user-attachments/assets/b404a794-d1c3-42d9-a53b-af5d75ef8db9" /><br/>
+<sub><b>Settings</b> — provider keys, language, output style, and permission health.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img width="472" alt="VoiceFlow advanced settings" src="https://github.com/user-attachments/assets/d4e89312-a0c6-4f2b-a536-d4c1a18a1296" /><br/>
+<sub><b>Advanced settings</b> — tune mic filtering and local workflow details.</sub>
+</td>
+<td width="50%" valign="top">
+<img width="521" alt="VoiceFlow onboarding flow" src="https://github.com/user-attachments/assets/b87bebd1-1d53-4f86-a7ca-bf342eeacdda" /><br/>
+<sub><b>Onboarding</b> — permission setup stays visible until the app is actually usable.</sub>
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img width="764" alt="English transcription example" src="https://github.com/user-attachments/assets/41bb65bd-d3f4-45d5-9410-030d93679b4b" /><br/>
+<sub><b>English dictation</b> — clean transcript output with paste-based insertion.</sub>
+</td>
+<td width="50%" valign="top">
+<img width="700" alt="Hindi English Hinglish example" src="https://github.com/user-attachments/assets/9da697fd-1575-49cc-b339-2396dfd0c1f4" /><br/>
+<sub><b>Hinglish mode</b> — Hindi + English speech normalized into readable Latin script.</sub>
+</td>
+</tr>
+</table>
 
-1. Open `VoiceFlow.xcodeproj` in Xcode
-2. Select scheme `VoiceFlow`
-3. Run: `Product -> Run`
+## 🚀 Quickstart
 
-VoiceFlow runs as a menu-bar app (no Dock icon by design).
+### Homebrew install
 
-## 🔐 First-Time Setup
+```bash
+brew install --cask raunaks068619/voiceflow/voiceflow
+```
 
-1. Add your OpenAI API key
-2. Grant **Microphone** permission
-3. Grant **Accessibility** permission
-4. Grant **Input Monitoring** permission
-   - `System Settings -> Privacy & Security -> Input Monitoring`
-   - Add `VoiceFlow.app` from Xcode build output if needed
-5. Onboarding `Done` stays disabled until all required permissions are granted.
+### Manual DMG install
 
-## 🛡️ Permission Model
+1. Download the latest DMG from [Releases](https://github.com/Raunaks068619/VoiceFlow/releases/latest).
+2. Drag `VoiceFlow.app` to `/Applications`.
+3. Right-click → Open on first launch.
+4. If macOS blocks the unsigned build, run:
 
-VoiceFlow requires 3 permissions:
-- **Microphone**: capture audio
-- **Accessibility**: inject transcribed text into the active app
-- **Input Monitoring**: listen for global hotkeys
+```bash
+xattr -dr com.apple.quarantine /Applications/VoiceFlow.app
+codesign --force --deep --sign - /Applications/VoiceFlow.app
+open /Applications/VoiceFlow.app
+```
 
-If any permission is missing:
-- Hotkeys are unavailable
-- Menu warning appears
-- Settings shows permission health and quick-fix actions
+### Run from source
+
+1. Open `VoiceFlow.xcodeproj` in Xcode 15+.
+2. Select the `VoiceFlow` scheme.
+3. Run `Product -> Run`.
+
+VoiceFlow runs as a menu-bar app, so it intentionally does not show a Dock icon.
+
+## 🔐 Permissions
+
+VoiceFlow needs three macOS permissions:
+
+| Permission | Why it is needed |
+|---|---|
+| **Microphone** | Capture audio while the hotkey is held. |
+| **Accessibility** | Insert transcribed text into the focused app. |
+| **Input Monitoring** | Listen for the global `Fn` / fallback hotkey. |
+
+If any permission is missing, hotkeys are disabled, the menu shows a warning,
+and Settings surfaces a quick-fix action.
+
+For a full walkthrough, including managed Mac / MDM edge cases, read
+[PERMISSIONS.md](./PERMISSIONS.md).
 
 ## ⌨️ Hotkeys
 
-- Primary: `Fn`
-- Fallback: `Right Option`
+| Hotkey | Use |
+|---|---|
+| `Fn` | Primary hold-to-talk trigger. |
+| `Right Option` | Fallback when macOS owns the globe / `Fn` key. |
 
 If `Fn` does not work:
-1. Set `System Settings -> Keyboard -> Press 🌐 key to` = `Do Nothing`
-2. Disable/reassign Dictation shortcut from `Press 🌐 Twice`
-3. Use `Right Option` fallback
 
-## ⚙️ Settings Guide
+1. Set `System Settings -> Keyboard -> Press 🌐 key to` to `Do Nothing`.
+2. Disable or reassign the Dictation shortcut from `Press 🌐 Twice`.
+3. Use the `Right Option` fallback.
 
-- **Language**: `Auto-detect` recommended
-- **Output Quality**:
-  - `Verbatim`: closest to raw speech
-  - `Clean`: grammar/punctuation cleanup
-  - `Clean + Hinglish`: English stays English, Hindi becomes Latin-script Hindi
-- **Transcription Mode**:
-  - `Dictation`: preserve spoken phrasing
-  - `Rewrite`: cleaner final intent text
-- **Microphone Filter**:
-  - Higher value = more background filtering
-  - Good starting range: `0.008` to `0.012`
+## ✍️ Output modes
 
-## 🧠 Transcription Pipeline
+| Mode | Best for |
+|---|---|
+| `Verbatim` | Closest possible output to the raw transcript. |
+| `Clean` | English cleanup: remove fillers, fix punctuation, preserve meaning. |
+| `Hinglish` | Hindi + English speech normalized into readable Latin script. |
+| `English` | Translate spoken input into natural English. |
 
-1. Record audio
-2. Voice activity filtering (with fallback)
-3. STT transcription (primary + fallback model)
-4. Post-processing by mode/style
-5. Inject text into active app
+Processing mode changes how much VoiceFlow rewrites:
 
-## 📦 Signed + Notarized DMG Release
+- `Dictation` preserves your phrasing.
+- `Rewrite` tightens grammar and collapses restarts.
 
-Use the provided release script:
+## 🧠 Transcription pipeline
+
+```text
+Hotkey -> Audio capture -> Voice activity filtering -> STT provider
+      -> Output mode router -> Optional polish / translation -> Text injection
+      -> Local run log -> Memory index
+```
+
+Provider behavior:
+
+| Provider | Use it for |
+|---|---|
+| **Groq** | Fast English dictation with the free path. |
+| **OpenAI** | Hindi, Hinglish, translation, and multilingual workflows. |
+| **LM Studio / Ollama** | Local polish and Memory chat through OpenAI-compatible endpoints. |
+
+## 🪄 Magic Words
+
+Magic Words are voice-triggered command aliases. They are designed for short,
+repeatable phrases like `git wip`, `list namespaces`, `describe pods`, or a
+personal workflow command you want VoiceFlow to expand reliably.
+
+The app exposes them as a first-class dashboard tab so supported commands are
+discoverable instead of hidden in code.
+
+## 🧾 Run Log + Memory
+
+Every dictation can be saved locally with:
+
+- raw transcription
+- final text
+- output mode and model
+- prompt metadata
+- latency
+- source audio path
+- error details
+
+Memory builds on that local history with searchable runs, entity extraction,
+a graph view, and chat over previous dictations.
+
+## 📦 Releases
+
+### Signed + notarized DMG
+
+Use the release script when you have Apple Developer ID credentials:
 
 ```bash
 scripts/release_dmg.sh \
@@ -110,93 +230,42 @@ scripts/release_dmg.sh \
 ```
 
 Required environment:
+
 - `DEVELOPER_ID_APP_CERT`
-- Notarization auth:
-  - `NOTARYTOOL_KEYCHAIN_PROFILE`, or
-  - `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `TEAM_ID`
+- `NOTARYTOOL_KEYCHAIN_PROFILE`, or
+- `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `TEAM_ID`
 
-Output:
-- `dist/VoiceFlow-<version>.dmg`
-- `dist/checksums.txt`
+### Unsigned build
 
-For friend testing:
-1. Share the notarized DMG from `dist/`
-2. Friend drags app to `/Applications`
-3. Friend launches app and grants permissions in onboarding
-
-## 📦 Installing on Another Mac (Unsigned Build)
-
-See [INSTALL.md](./INSTALL.md) for the full walkthrough, including the one-shot
-`xattr` + `codesign --sign -` fix for the "permissions don't stick / app crashes
-after first use" problem on unsigned DMGs.
-
-TL;DR after installing an unsigned build:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/VoiceFlow.app
-codesign --force --deep --sign - /Applications/VoiceFlow.app
-open /Applications/VoiceFlow.app
-```
-
-Or just double-click `First Run (fix permissions).command` from the DMG.
-
-## 📄 License
-
-MIT — see [LICENSE](./LICENSE). Note: MIT is a *copyright* license for the
-source code. It has **nothing to do with macOS code signing**. Distributing a
-DMG that launches cleanly on another Mac still requires either an Apple
-Developer ID certificate or the quarantine-strip workaround above.
+Unsigned builds are supported for open-source testing, but macOS quarantine
+must be cleared once after install. See [INSTALL.md](./INSTALL.md) for the
+full explanation and friend-testing flow.
 
 ## 🛠️ Troubleshooting
 
-### UI works but no transcription output
-
-Check Xcode logs:
-- `Recording started`
-- `Recording stopped`
-- `Transcription success: ... chars`
-- `Transcription error: ...`
-
-### Hotkey not triggering
-
-- Verify Accessibility permission
-- Verify Input Monitoring permission
-- Try `Right Option` fallback
-
-### Input Monitoring prompt does not appear
-
-- Open Onboarding or Settings and click `Request` for Input Monitoring
-- Click `Open Settings` to jump directly to privacy pane
-- If still missing, quit app, remove old entry from Input Monitoring list, relaunch and request again
-
-### Too much background speech
-
-- Increase `Microphone Filter`
-- Reduce ambient noise / use better mic
-
-### Wrong language/script style
-
-Use:
-- `Language: Auto-detect`
-- `Output Quality: Clean + Hinglish`
-- `Transcription Mode: Dictation`
-
-### Quick permission matrix
-
-| Symptom | Likely missing permission | Fix |
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| No recording starts from hotkey | Input Monitoring | Request in onboarding, then open Input Monitoring settings |
-| Recording works but no text typed | Accessibility | Request accessibility and enable app in system list |
-| No audio captured | Microphone | Request microphone and confirm selected input device |
+| Hotkey does nothing | Input Monitoring missing or `Fn` is remapped | Grant Input Monitoring, then check Keyboard settings. |
+| Recording works but no text appears | Accessibility missing or no focused text field | Grant Accessibility and click into a text field before recording. |
+| No audio captured | Microphone missing or wrong input device | Grant Microphone and verify the selected input. |
+| `Fn` conflicts with macOS | Globe key behavior is assigned to another action | Set `Press 🌐 key to` to `Do Nothing`, or use `Right Option`. |
+| Wrong language/script style | Output mode or provider mismatch | Use `Hinglish` / `English` with an OpenAI key for multilingual workflows. |
+| App says damaged or will not reopen | Unsigned build quarantined by Gatekeeper | Run the `xattr` + `codesign --sign -` fix from Quickstart. |
 
-## 📁 Project Structure
+## 📁 Project structure
 
-- `Sources/App` - app lifecycle and menu bar behavior
-- `Sources/Services` - recording, hotkeys, transcription, injection
-- `Sources/Views` - popover, onboarding, settings, overlay
-- `Resources` - plist and entitlements
+```text
+Sources/App        App lifecycle, hotkey handling, menu-bar behavior
+Sources/Services   audio, transcription, memory, Magic Words, text injection
+Sources/Views      dashboard, onboarding, settings, run log, memory graph
+Resources          plist, entitlements, app resources
+scripts            build, install, release, signing, verification helpers
+docs               planning notes and feature documentation
+```
 
-## 📝 Notes
+## 📄 License
 
-- Built for local development and testing with Xcode
-- OpenAI API usage incurs model-based costs
+MIT — see [LICENSE](./LICENSE).
+
+MIT covers source-code copyright. It does not replace Apple Developer ID
+signing or notarization for a frictionless macOS DMG install.
