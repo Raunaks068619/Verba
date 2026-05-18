@@ -15,7 +15,7 @@
 > graph that turns past transcripts into searchable context.
 
 <p align="center">
-  <img src="docs/assets/readme/voiceflow-hero-dark.png" alt="VoiceFlow dark mode home dashboard" width="100%" />
+  <img width="800" height="260" alt="voiceflow-hero-dark" src="https://github.com/user-attachments/assets/9af1e020-feae-483d-9a3b-95970f4bd4e3" />
 </p>
 
 <p align="center">
@@ -78,41 +78,49 @@ VoiceFlow is built for that gap:
 <table>
 <tr>
 <td width="50%" valign="top">
-<img src="docs/assets/readme/voiceflow-insights.png" alt="VoiceFlow Insights dashboard" /><br/>
+<img width="800" height="501" alt="voiceflow-insights" src="https://github.com/user-attachments/assets/873e93a9-4a8e-4033-95a8-5b38e35d2254" />
+<br/>
 <sub><b>Insights</b> — lifetime dictation stats, streaks, app usage, and AI-inferred work profile.</sub>
 </td>
 <td width="50%" valign="top">
-<img src="docs/assets/readme/voiceflow-memory.png" alt="VoiceFlow Memory graph" /><br/>
+<img width="800" height="501" alt="voiceflow-memory" src="https://github.com/user-attachments/assets/3587e493-0134-4ecd-b8c8-bede0ad0bc27" />
+<br/>
 <sub><b>Memory</b> — past transcripts become a searchable graph with chat over your own history.</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="docs/assets/readme/voiceflow-magic-words.png" alt="VoiceFlow Magic Words command center" /><br/>
+<img width="800" height="501" alt="voiceflow-magic-words" src="https://github.com/user-attachments/assets/ff663d41-5b98-4d83-bf54-f984561797f7" />
+<br/>
 <sub><b>Magic Words</b> — discoverable voice shortcuts for app actions and reusable snippets.</sub>
 </td>
 <td width="50%" valign="top">
-<img src="docs/assets/readme/voiceflow-run-log.png" alt="VoiceFlow Run Log list" /><br/>
+<img width="800" height="501" alt="voiceflow-run-log" src="https://github.com/user-attachments/assets/ca7bffa5-e2c1-4577-b4cc-c7eab68ea735" />
+<br/>
 <sub><b>Run Log</b> — local history for every dictation, with duration and quick inspection.</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="docs/assets/readme/voiceflow-run-log-detail.png" alt="VoiceFlow Run Log detail with audio transcription and post-processing steps" /><br/>
+<img width="800" height="510" alt="voiceflow-run-log-detail" src="https://github.com/user-attachments/assets/a2044489-12e0-4f74-a98b-39a54340a600" />
+<br/>
 <sub><b>Pipeline detail</b> — inspect audio capture, STT model, raw transcript, prompt, final text, and latency.</sub>
 </td>
 <td width="50%" valign="top">
-<img src="docs/assets/readme/voiceflow-settings-provider.png" alt="VoiceFlow provider settings" /><br/>
+<img width="800" height="501" alt="voiceflow-settings-provider" src="https://github.com/user-attachments/assets/8a3f0092-b66e-495b-a4de-c7324d151e72" />
+<br/>
 <sub><b>Provider control</b> — pick Groq, OpenAI, Claude Code, Codex CLI, Gemini CLI, or local models where available.</sub>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="docs/assets/readme/voiceflow-settings-output.png" alt="VoiceFlow output style and microphone settings" /><br/>
+<img width="800" height="501" alt="voiceflow-settings-output" src="https://github.com/user-attachments/assets/24ba2998-ea1d-4d88-b5ba-3d20c51ee397" />
+<br/>
 <sub><b>Output tuning</b> — choose Original vs English, Dictation vs Rewrite, sensitivity, and vocabulary hints.</sub>
 </td>
 <td width="50%" valign="top">
-<img src="docs/assets/readme/voiceflow-home-dark.png" alt="VoiceFlow dark mode home dashboard" /><br/>
+<img width="800" height="260" alt="voiceflow-hero-dark" src="https://github.com/user-attachments/assets/b507efa6-3ad0-4d38-993b-674184a8df81" />
+<br/>
 <sub><b>Dark mode</b> — the same command surface in a focused low-light workspace.</sub>
 </td>
 </tr>
