@@ -1,4 +1,5 @@
-# 🎙️ VoiceFlow
+# <h1> <img alt="VoiceFlow logo" width="250" align="center" src="https://github.com/user-attachments/assets/63dc5cc4-92fa-4b1e-8ddb-9b40ed2bc4ee" /> </br>VoiceFlow </h1>
+
 
 > [!IMPORTANT]
 > ### `v0.6.0` is here — Memory that works.
