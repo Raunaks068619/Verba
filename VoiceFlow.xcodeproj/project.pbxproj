@@ -7,7 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		057F678B908D87E1DE831FA4 /* RecordingOverlayWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39F5D0D1AE26FA25F5A3906F /* RecordingOverlayWindow.swift */; };
+		44AA00000000000000000001 /* NotchPillComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44BB00000000000000000001 /* NotchPillComponents.swift */; };
+		44AA00000000000000000002 /* NotchPillWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44BB00000000000000000002 /* NotchPillWindow.swift */; };
+		44AA00000000000000000003 /* NotchPillView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44BB00000000000000000003 /* NotchPillView.swift */; };
+		55AA00000000000000000001 /* FloatingChipWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55BB00000000000000000001 /* FloatingChipWindow.swift */; };
 		1729D8D1CE63C3934D599A43 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9A3515D754AEB9E26CCA68F /* SettingsView.swift */; };
 		17436F390943ED0428A98647 /* MainDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C52A4B39FDE4068BB6AF34AD /* MainDashboardView.swift */; };
 		318B02FCADB0B89565436A9F /* VoiceFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16049E136D576F6E7155DDD9 /* VoiceFlowApp.swift */; };
@@ -62,7 +65,10 @@
 /* Begin PBXFileReference section */
 		16049E136D576F6E7155DDD9 /* VoiceFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceFlowApp.swift; sourceTree = "<group>"; };
 		16A5AE6AF5A3ECD86B1C2456 /* TextInjector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextInjector.swift; sourceTree = "<group>"; };
-		39F5D0D1AE26FA25F5A3906F /* RecordingOverlayWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingOverlayWindow.swift; sourceTree = "<group>"; };
+		44BB00000000000000000001 /* NotchPillComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchPillComponents.swift; sourceTree = "<group>"; };
+		44BB00000000000000000002 /* NotchPillWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchPillWindow.swift; sourceTree = "<group>"; };
+		44BB00000000000000000003 /* NotchPillView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchPillView.swift; sourceTree = "<group>"; };
+		55BB00000000000000000001 /* FloatingChipWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingChipWindow.swift; sourceTree = "<group>"; };
 		40B268B6DBB1EDFFDB41F116 /* VoiceFlow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceFlow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		545269499F1DC1CA34A9BCD1 /* InputMonitoringGuideView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputMonitoringGuideView.swift; sourceTree = "<group>"; };
 		707DE76A41F81D64547A4653 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
@@ -202,13 +208,16 @@
 				AA66666666666666AABBAABB /* Components */,
 				FCCEE66076410F6A7435EAA5 /* AccessibilityGuideView.swift */,
 				11BB00000000000000000011 /* DevModeSettingsView.swift */,
+				55BB00000000000000000001 /* FloatingChipWindow.swift */,
 				545269499F1DC1CA34A9BCD1 /* InputMonitoringGuideView.swift */,
 				11BB0000000000000000000F /* InsightsView.swift */,
 				22BB00000000000000000003 /* KnowledgeGraphView.swift */,
 				C52A4B39FDE4068BB6AF34AD /* MainDashboardView.swift */,
 				11BB00000000000000000010 /* MagicWordsSettingsView.swift */,
 				707DE76A41F81D64547A4653 /* MenuBarView.swift */,
-				39F5D0D1AE26FA25F5A3906F /* RecordingOverlayWindow.swift */,
+				44BB00000000000000000001 /* NotchPillComponents.swift */,
+				44BB00000000000000000002 /* NotchPillWindow.swift */,
+				44BB00000000000000000003 /* NotchPillView.swift */,
 				DD22222222222222DDDDDDDD /* RunLogView.swift */,
 				D9A3515D754AEB9E26CCA68F /* SettingsView.swift */,
 			);
@@ -326,7 +335,10 @@
 				633CC693C9CD54CED45703D9 /* InputMonitoringGuideView.swift in Sources */,
 				17436F390943ED0428A98647 /* MainDashboardView.swift in Sources */,
 				7088ECD0D9DCA737B074E534 /* MenuBarView.swift in Sources */,
-				057F678B908D87E1DE831FA4 /* RecordingOverlayWindow.swift in Sources */,
+				55AA00000000000000000001 /* FloatingChipWindow.swift in Sources */,
+				44AA00000000000000000001 /* NotchPillComponents.swift in Sources */,
+				44AA00000000000000000002 /* NotchPillWindow.swift in Sources */,
+				44AA00000000000000000003 /* NotchPillView.swift in Sources */,
 				1729D8D1CE63C3934D599A43 /* SettingsView.swift in Sources */,
 				7ACB7F9379F4F1031DB656D2 /* TextInjector.swift in Sources */,
 				318B02FCADB0B89565436A9F /* VoiceFlowApp.swift in Sources */,
@@ -449,7 +461,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -462,7 +474,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 0.6.0;
+				MARKETING_VERSION = 0.6.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -507,7 +519,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 18;
+				CURRENT_PROJECT_VERSION = 19;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -526,7 +538,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				MARKETING_VERSION = 0.6.0;
+				MARKETING_VERSION = 0.6.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
