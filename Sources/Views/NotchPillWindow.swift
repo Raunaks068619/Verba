@@ -21,6 +21,7 @@ final class NotchPillModel: ObservableObject {
     @Published var audioLevel: Float = 0
     @Published var hasAllPermissions: Bool = true
     @Published var hardwareNotchSize: CGSize = NotchPillScreenGeometry.fallbackNotchSize
+    @Published var isExternalDock: Bool = false
     @Published var liveTranscript: String = ""
 
     var lastError: (title: String, desc: String, tip: String)?
@@ -28,12 +29,13 @@ final class NotchPillModel: ObservableObject {
 
 enum NotchPillScreenGeometry {
     static let fallbackNotchSize = CGSize(width: 162, height: 32)
-    static let surfaceHeightExtension: CGFloat = 4
+    static let externalDockSize = CGSize(width: 116, height: 8)
+    static let surfaceHeightExtension: CGFloat = 2
     static let defaultVisibleExpansion: CGFloat = 63
     static let maxSurfaceWidth: CGFloat = 420
-    static let transcriptStripHeight: CGFloat = 30
     static let expandedPanelHeight: CGFloat = 164
-    static let transcriptRevealWordCount = 3
+    static let listeningPanelHeight: CGFloat = 62
+    static let errorPanelHeight: CGFloat = 136
     static let morphDuration: TimeInterval = 0.20
 
     private static let lanePadding: CGFloat = 10
@@ -77,27 +79,42 @@ enum NotchPillScreenGeometry {
         notchFrame(on: screen) != nil
     }
 
-    static func defaultSurfaceSize(for notchSize: CGSize) -> CGSize {
-        let defaultPillWidth = max(248, notchSize.width + defaultVisibleExpansion)
+    static func defaultSurfaceSize(for notchSize: CGSize, isExternalDock: Bool = false) -> CGSize {
+        let defaultPillWidth = defaultPillWidth(
+            state: .idle,
+            notchSize: notchSize,
+            isExternalDock: isExternalDock
+        )
         return CGSize(
-            width: defaultPillWidth + 20,
-            height: notchSize.height + surfaceHeightExtension
+            width: defaultPillWidth + backgroundSideExpansion(state: .idle, isExternalDock: isExternalDock) * 2,
+            height: rowHeight(state: .idle, notchSize: notchSize, isExternalDock: isExternalDock)
         )
     }
 
     static func surfaceSize(
         state: NotchPillState,
         notchSize: CGSize,
+        isExternalDock: Bool,
         liveTranscript: String
     ) -> CGSize {
-        let rowHeight = notchSize.height + surfaceHeightExtension
-        let defaultPillWidth = max(248, notchSize.width + defaultVisibleExpansion)
-        let pillWidth = pillWidth(
+        let rowHeight = rowHeight(state: state, notchSize: notchSize, isExternalDock: isExternalDock)
+        let defaultPillWidth = defaultPillWidth(
             state: state,
-            notchWidth: notchSize.width,
+            notchSize: notchSize,
+            isExternalDock: isExternalDock
+        )
+        let centerGapWidth = centerGapWidth(
+            state: state,
+            notchSize: notchSize,
+            isExternalDock: isExternalDock,
             defaultPillWidth: defaultPillWidth
         )
-        let width = min(maxSurfaceWidth, pillWidth + backgroundSideExpansion(for: state) * 2)
+        let pillWidth = pillWidth(
+            state: state,
+            centerGapWidth: centerGapWidth,
+            defaultPillWidth: defaultPillWidth
+        )
+        let width = min(maxSurfaceWidth, pillWidth + backgroundSideExpansion(state: state, isExternalDock: isExternalDock) * 2)
         let height = rowHeight
             + inlineTranscriptHeight(state: state, liveTranscript: liveTranscript)
             + expandedPanelHeightValue(for: state)
@@ -105,9 +122,57 @@ enum NotchPillScreenGeometry {
         return CGSize(width: ceil(width), height: ceil(height))
     }
 
+    static func rowHeight(
+        state: NotchPillState,
+        notchSize: CGSize,
+        isExternalDock: Bool
+    ) -> CGFloat {
+        isExternalCompactResting(state: state, isExternalDock: isExternalDock)
+            ? externalDockSize.height
+            : notchSize.height + surfaceHeightExtension
+    }
+
+    static func defaultPillWidth(
+        state: NotchPillState,
+        notchSize: CGSize,
+        isExternalDock: Bool
+    ) -> CGFloat {
+        isExternalCompactResting(state: state, isExternalDock: isExternalDock)
+            ? externalDockSize.width
+            : max(248, notchSize.width + defaultVisibleExpansion)
+    }
+
+    static func centerGapWidth(
+        state: NotchPillState,
+        notchSize: CGSize,
+        isExternalDock: Bool,
+        defaultPillWidth: CGFloat
+    ) -> CGFloat {
+        isExternalCompactResting(state: state, isExternalDock: isExternalDock)
+            ? defaultPillWidth
+            : notchSize.width
+    }
+
+    static func backgroundSideExpansion(state: NotchPillState, isExternalDock: Bool) -> CGFloat {
+        if isExternalCompactResting(state: state, isExternalDock: isExternalDock) {
+            return 0
+        }
+        return backgroundSideExpansion(for: state)
+    }
+
+    static func isExternalCompactResting(state: NotchPillState, isExternalDock: Bool) -> Bool {
+        guard isExternalDock else { return false }
+        switch state {
+        case .idle, .proximity:
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func pillWidth(
         state: NotchPillState,
-        notchWidth: CGFloat,
+        centerGapWidth: CGFloat,
         defaultPillWidth: CGFloat
     ) -> CGFloat {
         switch state {
@@ -120,7 +185,7 @@ enum NotchPillScreenGeometry {
                 + measuredStatusTextWidth(statusLabel(for: state))
                 + statusTrailingPadding
             let laneWidth = max(leftContentWidth, rightContentWidth(for: state)) + stateWidthBreathingRoom
-            return max(defaultPillWidth, ceil(notchWidth + laneWidth * 2))
+            return max(defaultPillWidth, ceil(centerGapWidth + laneWidth * 2))
         }
     }
 
@@ -139,21 +204,14 @@ enum NotchPillScreenGeometry {
         }
     }
 
-    private static func inlineTranscriptHeight(state: NotchPillState, liveTranscript: String) -> CGFloat {
-        switch state {
-        case .listening, .handsFree, .panelTranscript:
-            let wordCount = liveTranscript
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .split(whereSeparator: { $0.isWhitespace })
-                .count
-            return wordCount >= transcriptRevealWordCount ? transcriptStripHeight : 0
-        default:
-            return 0
-        }
+    private static func inlineTranscriptHeight(state _: NotchPillState, liveTranscript _: String) -> CGFloat {
+        0
     }
 
     private static func expandedPanelHeightValue(for state: NotchPillState) -> CGFloat {
         if case .panelHover = state { return expandedPanelHeight }
+        if case .panelTranscript = state { return listeningPanelHeight }
+        if case .panelError = state { return errorPanelHeight }
         return 0
     }
 
@@ -198,6 +256,9 @@ enum NotchPillScreenGeometry {
         }
         if lower.contains("input") {
             return "No input"
+        }
+        if lower.contains("clipboard") || lower.contains("copied") {
+            return "Copied"
         }
         if lower.contains("audio") {
             return "No audio"
@@ -244,7 +305,7 @@ final class NotchPillCanvasView: NSView {
         trackingAreas.forEach { removeTrackingArea($0) }
         addTrackingArea(NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways],
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         ))
@@ -286,7 +347,7 @@ final class NotchPillWindow: NSPanel {
             defer: false
         )
 
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)) + 2)
+        level = .statusBar
         backgroundColor = .clear
         isOpaque = false
         hasShadow = false
@@ -294,7 +355,7 @@ final class NotchPillWindow: NSPanel {
         isFloatingPanel = true
         hidesOnDeactivate = false
         becomesKeyOnlyIfNeeded = true
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isReleasedWhenClosed = false
         isMovable = false
         isExcludedFromWindowsMenu = true
@@ -330,7 +391,7 @@ final class NotchPillWindow: NSPanel {
             self.reposition(animated: false)
             self.alphaValue = 1
             self.orderFrontRegardless()
-            self.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)) + 2)
+            self.level = .statusBar
         }
     }
 
@@ -341,7 +402,7 @@ final class NotchPillWindow: NSPanel {
     }
 
     func setRecording() {
-        setState(.listening, resetAudio: true, clearTranscript: true)
+        setState(.panelTranscript(text: ""), resetAudio: true, clearTranscript: true)
     }
 
     func setProcessing() {
@@ -402,6 +463,21 @@ final class NotchPillWindow: NSPanel {
             title: "No input field detected",
             desc: "VoiceFlow couldn't find an active text field. Use Cmd+V to paste the transcription manually.",
             tip: "Click into any text field first, then hold Fn to dictate directly into it.",
+            durationSeconds: durationSeconds
+        ) {
+            NotificationCenter.default.post(
+                name: Notification.Name("VoiceFlow.DismissChipWarning"),
+                object: nil
+            )
+        }
+    }
+
+    func flashTranscriptCopied(durationSeconds: Double = 4.5) {
+        flash(
+            message: "Transcript copied to clipboard - use Cmd+V to paste",
+            title: "Transcript copied to clipboard",
+            desc: "No input field was found. The transcription is on your clipboard temporarily.",
+            tip: "Use Cmd+V to paste it, or click into a text field before dictating.",
             durationSeconds: durationSeconds
         ) {
             NotificationCenter.default.post(
@@ -486,10 +562,10 @@ final class NotchPillWindow: NSPanel {
             guard let self else { return }
             self.flashTimer?.invalidate()
             self.model.lastError = (title: title, desc: desc, tip: tip)
-            self.model.state = .errorMini(message: message)
+            self.model.state = .panelError(title: title, desc: desc, tip: tip)
             self.model.audioLevel = 0
             self.flashTimer = Timer.scheduledTimer(withTimeInterval: durationSeconds, repeats: false) { [weak self] _ in
-                guard let self, case .errorMini = self.model.state else { return }
+                guard let self, case .panelError = self.model.state else { return }
                 self.model.state = .idle
                 onDismiss?()
             }
@@ -501,15 +577,23 @@ final class NotchPillWindow: NSPanel {
         guard let screen else { return }
 
         anchoredScreen = screen
-        model.hardwareNotchSize = NotchPillScreenGeometry.detect(on: screen)
+        let detectedNotchSize = NotchPillScreenGeometry.detect(on: screen)
+        if model.hardwareNotchSize != detectedNotchSize {
+            model.hardwareNotchSize = detectedNotchSize
+        }
+        let isExternalDock = !NotchPillScreenGeometry.hasHardwareNotch(on: screen)
+        if model.isExternalDock != isExternalDock {
+            model.isExternalDock = isExternalDock
+        }
 
         applyFrame(on: screen, animated: animated)
     }
 
     private func observeSurfaceBounds() {
-        Publishers.Merge3(
+        Publishers.Merge4(
             model.$state.map { _ in () }.eraseToAnyPublisher(),
             model.$hardwareNotchSize.map { _ in () }.eraseToAnyPublisher(),
+            model.$isExternalDock.map { _ in () }.eraseToAnyPublisher(),
             model.$liveTranscript.map { _ in () }.eraseToAnyPublisher()
         )
             .receive(on: DispatchQueue.main)
@@ -531,6 +615,10 @@ final class NotchPillWindow: NSPanel {
         guard let screen else { return }
 
         anchoredScreen = screen
+        let isExternalDock = !NotchPillScreenGeometry.hasHardwareNotch(on: screen)
+        if model.isExternalDock != isExternalDock {
+            model.isExternalDock = isExternalDock
+        }
         let windowSize = currentSurfaceSize()
         let targetFrame = surfaceFrame(for: windowSize, on: screen)
 
@@ -554,8 +642,6 @@ final class NotchPillWindow: NSPanel {
     private func preferredScreen() -> NSScreen? {
         let mouseScreen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
         return screenWithHardwareNotch(containing: NSEvent.mouseLocation)
-            ?? mouseScreen.flatMap { NotchPillScreenGeometry.hasHardwareNotch(on: $0) ? $0 : nil }
-            ?? NSScreen.screens.first(where: NotchPillScreenGeometry.hasHardwareNotch)
             ?? mouseScreen
             ?? NSScreen.main
             ?? NSScreen.screens.first
@@ -631,6 +717,7 @@ final class NotchPillWindow: NSPanel {
         let size = NotchPillScreenGeometry.surfaceSize(
             state: state,
             notchSize: model.hardwareNotchSize,
+            isExternalDock: model.isExternalDock,
             liveTranscript: model.liveTranscript
         )
         let hoverFrame = surfaceFrame(for: size, on: screen)
@@ -653,6 +740,7 @@ final class NotchPillWindow: NSPanel {
         NotchPillScreenGeometry.surfaceSize(
             state: model.state,
             notchSize: model.hardwareNotchSize,
+            isExternalDock: model.isExternalDock,
             liveTranscript: model.liveTranscript
         )
     }

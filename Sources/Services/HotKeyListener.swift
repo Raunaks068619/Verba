@@ -20,12 +20,13 @@ class HotKeyListener {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
-    private var flagsMonitor: Any?
     private var isTriggerActive = false
-    private var lastRawFnEventTime: TimeInterval = 0
     private let fnKeyCode: Int64 = 63
-    private let rightOptionKeyCode: Int64 = 61
     private let escapeKeyCode: Int64 = 53
+
+    deinit {
+        stop()
+    }
 
     func start() -> HotKeyStartResult {
         stop()
@@ -44,10 +45,10 @@ class HotKeyListener {
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .defaultTap,
+            options: .listenOnly,
             eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-                guard let refcon = refcon else { return Unmanaged.passRetained(event) }
+                guard let refcon = refcon else { return nil }
                 let listener = Unmanaged<HotKeyListener>.fromOpaque(refcon).takeUnretainedValue()
                 return listener.handleEvent(proxy: proxy, type: type, event: event)
             },
@@ -61,15 +62,7 @@ class HotKeyListener {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         
-        print("HotKeyListener started with CGEvent tap")
-
-        flagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            self?.handleFlagsChanged(
-                keyCode: Int64(event.keyCode),
-                hasFnFlag: event.modifierFlags.contains(.function),
-                hasOptionFlag: event.modifierFlags.contains(.option)
-            )
-        }
+        print("HotKeyListener started with passive CGEvent tap")
         return .started
     }
     
@@ -82,10 +75,6 @@ class HotKeyListener {
         }
         eventTap = nil
         runLoopSource = nil
-        if let monitor = flagsMonitor {
-            NSEvent.removeMonitor(monitor)
-            flagsMonitor = nil
-        }
         isTriggerActive = false
     }
     
@@ -94,7 +83,7 @@ class HotKeyListener {
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
-            return Unmanaged.passRetained(event)
+            return nil
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
@@ -105,21 +94,20 @@ class HotKeyListener {
             DispatchQueue.main.async { [weak self] in
                 self?.onEscape?()
             }
-            return Unmanaged.passRetained(event)
+            return nil
         }
 
         guard type == .flagsChanged else {
-            return Unmanaged.passRetained(event)
+            return nil
         }
 
         let hasFnFlag = event.flags.contains(.maskSecondaryFn)
-        let hasOptionFlag = event.flags.contains(.maskAlternate)
-        handleFlagsChanged(keyCode: keyCode, hasFnFlag: hasFnFlag, hasOptionFlag: hasOptionFlag)
+        handleFlagsChanged(keyCode: keyCode, hasFnFlag: hasFnFlag)
 
-        return Unmanaged.passRetained(event)
+        return nil
     }
 
-    private func handleFlagsChanged(keyCode: Int64, hasFnFlag: Bool, hasOptionFlag: Bool) {
+    private func handleFlagsChanged(keyCode: Int64, hasFnFlag: Bool) {
         // Fn is the ONLY trigger. Right Option previously acted as a fallback
         // but caused accidental activation when users genuinely wanted Option
         // as a modifier. If Fn doesn't register on a given keyboard, the fix
@@ -129,7 +117,6 @@ class HotKeyListener {
             // Previous implementation toggled on "raw fn without flag" which caused
             // stuck-recording bugs when the release event arrived without the flag.
             setTriggerActive(hasFnFlag, pressedLog: "Fn pressed!", releasedLog: "Fn released!")
-            lastRawFnEventTime = Date().timeIntervalSinceReferenceDate
             return
         }
 

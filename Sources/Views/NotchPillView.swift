@@ -15,37 +15,42 @@ struct NotchPillView: View {
     private let doneTickWidth: CGFloat = 18
     private let pulseWidth: CGFloat = 24
     private let canvasWidth = NotchPillScreenGeometry.maxSurfaceWidth
-    private let transcriptStripHeight = NotchPillScreenGeometry.transcriptStripHeight
-    private let transcriptRevealWordCount = NotchPillScreenGeometry.transcriptRevealWordCount
     private let expandedPanelHeight = NotchPillScreenGeometry.expandedPanelHeight
+    private let listeningPanelHeight = NotchPillScreenGeometry.listeningPanelHeight
+    private let errorPanelHeight = NotchPillScreenGeometry.errorPanelHeight
     private let morphAnimation = Animation.timingCurve(0.16, 1.0, 0.30, 1.0, duration: 0.20)
     private let panelContentAnimation = Animation.easeOut(duration: 0.12).delay(0.04)
 
     private var backgroundSideExpansion: CGFloat {
-        switch model.state {
-        case .idle, .proximity:
-            return 10
-        case .thinking:
-            return 18
-        case .listening, .handsFree, .panelTranscript:
-            return 20
-        case .done:
-            return 18
-        case .errorMini, .panelHover, .panelError:
-            return 16
-        }
+        NotchPillScreenGeometry.backgroundSideExpansion(
+            state: model.state,
+            isExternalDock: model.isExternalDock
+        )
     }
 
-    private var hardwareNotchWidth: CGFloat {
-        model.hardwareNotchSize.width
+    private var centerGapWidth: CGFloat {
+        NotchPillScreenGeometry.centerGapWidth(
+            state: model.state,
+            notchSize: model.hardwareNotchSize,
+            isExternalDock: model.isExternalDock,
+            defaultPillWidth: defaultPillWidth
+        )
     }
 
     private var rowHeight: CGFloat {
-        model.hardwareNotchSize.height + NotchPillScreenGeometry.surfaceHeightExtension
+        NotchPillScreenGeometry.rowHeight(
+            state: model.state,
+            notchSize: model.hardwareNotchSize,
+            isExternalDock: model.isExternalDock
+        )
     }
 
     private var defaultPillWidth: CGFloat {
-        max(248, hardwareNotchWidth + NotchPillScreenGeometry.defaultVisibleExpansion)
+        NotchPillScreenGeometry.defaultPillWidth(
+            state: model.state,
+            notchSize: model.hardwareNotchSize,
+            isExternalDock: model.isExternalDock
+        )
     }
 
     private var backgroundWidth: CGFloat {
@@ -57,11 +62,20 @@ struct NotchPillView: View {
     }
 
     private var inlineTranscriptHeight: CGFloat {
-        showsInlineTranscript ? transcriptStripHeight : 0
+        0
     }
 
     private var expandedPanelHeightValue: CGFloat {
-        showsExpandedPanel ? expandedPanelHeight : 0
+        switch model.state {
+        case .panelHover:
+            return expandedPanelHeight
+        case .panelTranscript:
+            return listeningPanelHeight
+        case .panelError:
+            return errorPanelHeight
+        default:
+            return 0
+        }
     }
 
     var body: some View {
@@ -79,21 +93,26 @@ struct NotchPillView: View {
     private var notchSurface: some View {
         ZStack {
             notchShape
-                .fill(NotchPillPalette.fill)
+                .fill(NotchPillPalette.fill.opacity(isExternalCompactResting ? 0.42 : 1.0))
                 .overlay {
-                    notchShape
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    NotchPillPalette.mark.opacity(0.07),
-                                    stateGlowColor.opacity(glowOpacity * 0.32),
-                                    NotchPillPalette.mark.opacity(0.025)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.7
-                        )
+                    if isExternalCompactResting {
+                        notchShape
+                            .stroke(NotchPillPalette.mark.opacity(0.50), lineWidth: 0.5)
+                    } else {
+                        notchShape
+                            .stroke(
+                                LinearGradient(
+                                    colors: [
+                                        NotchPillPalette.mark.opacity(0.07),
+                                        stateGlowColor.opacity(glowOpacity * 0.32),
+                                        NotchPillPalette.mark.opacity(0.025)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 0.7
+                            )
+                    }
                 }
 
             NotchStateGlowView(
@@ -139,19 +158,27 @@ struct NotchPillView: View {
         .contentShape(notchShape)
     }
 
+    @ViewBuilder
     private var pillRow: some View {
-        HStack(spacing: 0) {
-            leftVisibleLane
-                .frame(width: visibleLaneWidth, alignment: .leading)
-
+        if isExternalCompactResting {
             Color.clear
-                .frame(width: hardwareNotchWidth, height: rowHeight)
+                .frame(width: pillWidth, height: rowHeight)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: handleTap)
+        } else {
+            HStack(spacing: 0) {
+                leftVisibleLane
+                    .frame(width: visibleLaneWidth, alignment: .leading)
 
-            rightVisibleLane
-                .frame(width: visibleLaneWidth, alignment: .trailing)
+                Color.clear
+                    .frame(width: centerGapWidth, height: rowHeight)
+
+                rightVisibleLane
+                    .frame(width: visibleLaneWidth, alignment: .trailing)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: handleTap)
         }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: handleTap)
     }
 
     @ViewBuilder
@@ -184,16 +211,229 @@ struct NotchPillView: View {
                     .fill(NotchPillPalette.mark.opacity(0.07))
                     .frame(height: 1)
 
-                panelHeader
-
-                latestLogsList
-
-                panelFeatureRow
+                switch model.state {
+                case .panelTranscript:
+                    listeningPanelContent
+                case .panelError(let title, let desc, let tip):
+                    errorPanelContent(title: title, desc: desc, tip: tip)
+                default:
+                    hoverPanelContent
+                }
             }
             .allowsHitTesting(true)
         } else {
             Color.clear
         }
+    }
+
+    private var hoverPanelContent: some View {
+        VStack(spacing: 0) {
+            panelHeader
+
+            latestLogsList
+
+            panelFeatureRow
+        }
+    }
+
+    private var listeningPanelContent: some View {
+        VStack(spacing: 0) {
+            listeningPanelHeader
+
+            listeningPanelFooter
+        }
+    }
+
+    private var listeningPanelHeader: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(NotchPillPalette.blue)
+                .frame(width: 6, height: 6)
+                .opacity(0.85)
+
+            Text("Listening")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(NotchPillPalette.blue.opacity(0.86))
+
+            Spacer(minLength: 0)
+
+            WaveformBarsView(audioLevel: model.audioLevel, color: NotchPillPalette.blue)
+                .frame(width: 34, height: 14)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(NotchPillPalette.mark.opacity(0.065))
+                .frame(height: 1)
+        }
+    }
+
+    private var listeningPanelFooter: some View {
+        HStack(spacing: 6) {
+            Text("Release")
+                .font(.system(size: 10.5, weight: .regular))
+                .foregroundColor(NotchPillPalette.mark.opacity(0.26))
+
+            Text("Fn")
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundColor(NotchPillPalette.mark.opacity(0.42))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(NotchPillPalette.mark.opacity(0.07))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .strokeBorder(NotchPillPalette.mark.opacity(0.10), lineWidth: 1)
+                )
+
+            Text("to send")
+                .font(.system(size: 10.5, weight: .regular))
+                .foregroundColor(NotchPillPalette.mark.opacity(0.26))
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 28)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(NotchPillPalette.mark.opacity(0.055))
+                .frame(height: 1)
+        }
+    }
+
+    private func errorPanelContent(title: String, desc: String, tip: String) -> some View {
+        let presentation = panelNoticePresentation(title: title, desc: desc, tip: tip)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                HStack(spacing: 5) {
+                    Image(systemName: presentation.icon)
+                        .font(.system(size: 9.5, weight: .semibold))
+
+                    Text(presentation.badge)
+                        .font(.system(size: 10, weight: .semibold))
+                        .tracking(0.2)
+                }
+                .foregroundColor(presentation.accent.opacity(0.92))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(presentation.accent.opacity(0.10))
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(presentation.accent.opacity(0.18), lineWidth: 1)
+                }
+
+                Spacer(minLength: 0)
+
+                if presentation.isClipboardFallback {
+                    Button {
+                        model.state = .idle
+                    } label: {
+                        Text("Done")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .frame(width: 58, height: 22)
+                    }
+                    .buttonStyle(NotchErrorPrimaryButtonStyle(accent: presentation.accent))
+                } else {
+                    Button {
+                        retryAfterError()
+                    } label: {
+                        Text("Try again")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .frame(width: 74, height: 22)
+                    }
+                    .buttonStyle(NotchErrorPrimaryButtonStyle(accent: presentation.accent))
+
+                    Button {
+                        openRunLogFromError()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Logs")
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 8.5, weight: .semibold))
+                        }
+                        .font(.system(size: 10.5, weight: .medium))
+                        .frame(width: 58, height: 22)
+                    }
+                    .buttonStyle(NotchErrorSecondaryButtonStyle())
+                }
+            }
+            .padding(.bottom, 7)
+
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(NotchPillPalette.mark.opacity(0.86))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.bottom, 4)
+
+            Text(desc)
+                .font(.system(size: 11, weight: .regular))
+                .foregroundColor(NotchPillPalette.mark.opacity(0.48))
+                .lineSpacing(2)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 8)
+
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "lightbulb.fill")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(presentation.accent.opacity(0.76))
+                    .frame(width: 12, height: 14)
+
+                Text(tip)
+                    .font(.system(size: 10.5, weight: .regular))
+                    .foregroundColor(NotchPillPalette.mark.opacity(0.46))
+                    .lineSpacing(2)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(NotchPillPalette.mark.opacity(0.035))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(NotchPillPalette.mark.opacity(0.055), lineWidth: 1)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 9)
+        .padding(.bottom, 10)
+    }
+
+    private struct PanelNoticePresentation {
+        let badge: String
+        let icon: String
+        let accent: Color
+        let isClipboardFallback: Bool
+    }
+
+    private func panelNoticePresentation(title: String, desc: String, tip: String) -> PanelNoticePresentation {
+        let lower = "\(title) \(desc) \(tip)".lowercased()
+        if lower.contains("clipboard") || lower.contains("copied") || lower.contains("input field") {
+            return PanelNoticePresentation(
+                badge: "Copied",
+                icon: "doc.on.clipboard.fill",
+                accent: NotchPillPalette.violet,
+                isClipboardFallback: true
+            )
+        }
+        return PanelNoticePresentation(
+            badge: "Error",
+            icon: "exclamationmark.triangle.fill",
+            accent: compactErrorColor(for: title),
+            isClipboardFallback: false
+        )
     }
 
     private var panelHeader: some View {
@@ -348,7 +588,10 @@ struct NotchPillView: View {
     private var rightVisibleLane: some View {
         HStack(spacing: 8) {
             switch model.state {
-            case .listening, .handsFree, .panelTranscript:
+            case .panelTranscript, .panelError:
+                topRowCloseButton
+                    .frame(width: recordingMeterWidth, height: 24, alignment: .trailing)
+            case .listening, .handsFree:
                 WaveformBarsView(audioLevel: model.audioLevel, color: pulseColor)
                     .frame(width: recordingMeterWidth, height: 14)
             case .thinking:
@@ -364,6 +607,18 @@ struct NotchPillView: View {
         }
         .padding(.trailing, visibleLaneWidth <= 34 ? 5 : 10)
         .clipped()
+    }
+
+    private var topRowCloseButton: some View {
+        Button {
+            closeTopRowPanel()
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 9.5, weight: .semibold))
+                .frame(width: 22, height: 22)
+        }
+        .buttonStyle(NotchPanelCircleButtonStyle())
+        .help("Close panel")
     }
 
     @ViewBuilder
@@ -425,7 +680,7 @@ struct NotchPillView: View {
             + measuredStatusTextWidth(label)
             + statusTrailingPadding
         let laneWidth = max(leftContentWidth, rightContentWidth) + stateWidthBreathingRoom
-        return max(defaultPillWidth, ceil(hardwareNotchWidth + laneWidth * 2))
+        return max(defaultPillWidth, ceil(centerGapWidth + laneWidth * 2))
     }
 
     private func measuredStatusTextWidth(_ label: String) -> CGFloat {
@@ -434,46 +689,49 @@ struct NotchPillView: View {
     }
 
     private var visibleLaneWidth: CGFloat {
-        max((pillWidth - hardwareNotchWidth) / 2, 0)
+        max((pillWidth - centerGapWidth) / 2, 0)
     }
 
     private var showsInlineTranscript: Bool {
-        guard isListeningForInlineTranscript else { return false }
-        return inlineTranscriptWordCount >= transcriptRevealWordCount
+        false
     }
 
     private var showsExpandedPanel: Bool {
         if case .panelHover = model.state { return true }
+        if case .panelTranscript = model.state { return true }
+        if case .panelError = model.state { return true }
         return false
-    }
-
-    private var isListeningForInlineTranscript: Bool {
-        switch model.state {
-        case .listening, .handsFree, .panelTranscript:
-            return true
-        default:
-            return false
-        }
     }
 
     private var inlineTranscriptText: String {
         model.liveTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var inlineTranscriptWordCount: Int {
-        inlineTranscriptText.split(whereSeparator: { $0.isWhitespace }).count
-    }
-
     private var topCornerRadius: CGFloat {
-        max(bottomCornerRadius - 4, 0)
+        if isExternalCompactResting {
+            return rowHeight / 2
+        }
+        return max(bottomCornerRadius - 4, 0)
     }
 
     private var bottomCornerRadius: CGFloat {
-        showsExpandedPanel ? 18 : rowHeight / 3
+        if isExternalCompactResting {
+            return rowHeight / 2
+        }
+        return showsExpandedPanel ? 18 : rowHeight / 3
+    }
+
+    private var isExternalCompactResting: Bool {
+        NotchPillScreenGeometry.isExternalCompactResting(
+            state: model.state,
+            isExternalDock: model.isExternalDock
+        )
     }
 
     private var showsStatusLabel: Bool {
-        visibleLaneWidth > 70
+        if case .panelTranscript = model.state { return false }
+        if case .panelError = model.state { return false }
+        return visibleLaneWidth > 70
     }
 
     private var statusLabel: String {
@@ -515,6 +773,10 @@ struct NotchPillView: View {
     }
 
     private var stateGlowIntensity: Double {
+        if isExternalCompactResting {
+            return 0
+        }
+
         switch model.state {
         case .listening, .handsFree, .panelTranscript:
             return 0.66
@@ -563,8 +825,10 @@ struct NotchPillView: View {
         switch model.state {
         case .thinking:
             return NotchPillPalette.magenta
-        case .errorMini, .panelError:
-            return NotchPillPalette.warning
+        case .errorMini(let message):
+            return compactErrorColor(for: message)
+        case .panelError(let title, _, _):
+            return compactErrorColor(for: title)
         case .done:
             return NotchPillPalette.cyan
         default:
@@ -676,6 +940,24 @@ struct NotchPillView: View {
         model.state = .idle
     }
 
+    private func closeTopRowPanel() {
+        switch model.state {
+        case .panelTranscript:
+            model.state = .listening
+        default:
+            model.state = .idle
+        }
+    }
+
+    private func retryAfterError() {
+        model.state = .idle
+    }
+
+    private func openRunLogFromError() {
+        model.state = .idle
+        NotificationCenter.default.post(name: Notification.Name("VoiceFlow.OpenRunLog"), object: nil)
+    }
+
     private func openDashboardTab(_ tab: String) {
         model.state = .idle
         NotificationCenter.default.post(name: Notification.Name("VoiceFlow.OpenMainWindow"), object: nil)
@@ -696,6 +978,9 @@ struct NotchPillView: View {
         if lower.contains("input") {
             return "No input"
         }
+        if lower.contains("clipboard") || lower.contains("copied") {
+            return "Copied"
+        }
         if lower.contains("audio") {
             return "No audio"
         }
@@ -703,13 +988,20 @@ struct NotchPillView: View {
     }
 
     private func compactErrorColor(for text: String) -> Color {
-        text.lowercased().contains("output") ? NotchPillPalette.failure : NotchPillPalette.warning
+        let lower = text.lowercased()
+        if lower.contains("clipboard") || lower.contains("copied") {
+            return NotchPillPalette.violet
+        }
+        return lower.contains("output") ? NotchPillPalette.failure : NotchPillPalette.warning
     }
 
     private func helpText(forError text: String) -> String {
         let lower = text.lowercased()
         if lower.contains("permission") || lower.contains("microphone") {
             return "Grant permissions to dictate"
+        }
+        if lower.contains("clipboard") || lower.contains("copied") {
+            return "Transcript copied. Use Cmd+V to paste it."
         }
         if lower.contains("audio") {
             return "No audio detected. Click to adjust microphone sensitivity."
@@ -722,7 +1014,9 @@ struct NotchPillView: View {
 
     private func routeErrorTap(_ text: String) {
         let lower = text.lowercased()
-        if lower.contains("permission") || lower.contains("microphone") {
+        if lower.contains("clipboard") || lower.contains("copied") {
+            model.state = .idle
+        } else if lower.contains("permission") || lower.contains("microphone") {
             NotificationCenter.default.post(name: Notification.Name("VoiceFlow.OpenOnboardingPermissions"), object: nil)
         } else if lower.contains("audio") || lower.contains("input") {
             NotificationCenter.default.post(name: Notification.Name("VoiceFlow.OpenSettings"), object: nil)

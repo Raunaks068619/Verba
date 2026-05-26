@@ -399,6 +399,53 @@ struct NotchPanelIconButtonStyle: ButtonStyle {
     }
 }
 
+struct NotchPanelCircleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundColor(NotchPillPalette.mark.opacity(configuration.isPressed ? 0.82 : 0.40))
+            .background(
+                Circle()
+                    .fill(NotchPillPalette.mark.opacity(configuration.isPressed ? 0.13 : 0.07))
+            )
+            .overlay {
+                Circle()
+                    .stroke(NotchPillPalette.mark.opacity(configuration.isPressed ? 0.12 : 0.06), lineWidth: 1)
+            }
+    }
+}
+
+struct NotchErrorPrimaryButtonStyle: ButtonStyle {
+    var accent: Color = NotchPillPalette.warning
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundColor(accent.opacity(configuration.isPressed ? 1.0 : 0.92))
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(accent.opacity(configuration.isPressed ? 0.20 : 0.12))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(accent.opacity(configuration.isPressed ? 0.32 : 0.24), lineWidth: 1)
+            }
+    }
+}
+
+struct NotchErrorSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundColor(NotchPillPalette.mark.opacity(configuration.isPressed ? 0.78 : 0.46))
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(NotchPillPalette.mark.opacity(configuration.isPressed ? 0.10 : 0.045))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(NotchPillPalette.mark.opacity(configuration.isPressed ? 0.12 : 0.065), lineWidth: 1)
+            }
+    }
+}
+
 struct NotchPanelFeatureButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

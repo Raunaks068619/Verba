@@ -51,6 +51,7 @@ protocol FeedbackSurface: AnyObject {
     func setHandsFreeExitedAnimating()
     func flashPermissionsWarning(durationSeconds: Double)
     func flashNoInputWarning(durationSeconds: Double)
+    func flashTranscriptCopied(durationSeconds: Double)
     func flashNoAudioWarning(durationSeconds: Double)
     func flashNoOutputWarning(durationSeconds: Double)
     func setPermissionsAvailable(_ available: Bool)
@@ -73,6 +74,7 @@ final class FloatingChipModel: ObservableObject {
         case processing
         case done
         case noInputWarning
+        case transcriptCopied
         case permissionsMissing
         case noAudioWarning
         case noOutputWarning
@@ -222,6 +224,12 @@ final class FloatingChipWindow: NSPanel, FeedbackSurface {
 
     func flashNoInputWarning(durationSeconds: Double = 4.5) {
         flash(.noInputWarning, durationSeconds: durationSeconds) {
+            NotificationCenter.default.post(name: Notification.Name("VoiceFlow.DismissChipWarning"), object: nil)
+        }
+    }
+
+    func flashTranscriptCopied(durationSeconds: Double = 4.5) {
+        flash(.transcriptCopied, durationSeconds: durationSeconds) {
             NotificationCenter.default.post(name: Notification.Name("VoiceFlow.DismissChipWarning"), object: nil)
         }
     }
@@ -407,6 +415,17 @@ struct FloatingChipView: View {
                 icon: "info.circle.fill",
                 color: Color(red: 0.85, green: 0.70, blue: 1.0),
                 text: "Click a textbox and use Cmd+V to paste",
+                actionIcon: "xmark",
+                action: {
+                    NotificationCenter.default.post(name: Notification.Name("VoiceFlow.DismissChipWarning"), object: nil)
+                }
+            )
+        case .transcriptCopied:
+            warningChip(
+                badge: "Copied",
+                icon: "doc.on.clipboard.fill",
+                color: Color(red: 0.59, green: 0.16, blue: 1.00),
+                text: "Transcript copied - use Cmd+V to paste",
                 actionIcon: "xmark",
                 action: {
                     NotificationCenter.default.post(name: Notification.Name("VoiceFlow.DismissChipWarning"), object: nil)

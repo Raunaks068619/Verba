@@ -39,8 +39,8 @@ struct SettingsView: View {
     }
 
     let providers = [
-        (TranscriptionProvider.openai.rawValue, "OpenAI (Paid · Hindi+English)"),
-        (TranscriptionProvider.groq.rawValue, "Groq (Free · English only)")
+        (TranscriptionProvider.openai.rawValue, "OpenAI (Paid · GPT-4 Polish)"),
+        (TranscriptionProvider.groq.rawValue, "Groq (Free · Multilingual)")
     ]
     
     let languages = [
@@ -50,9 +50,9 @@ struct SettingsView: View {
     ]
 
     let outputModes = [
-        (TranscriptOutputStyle.verbatim.rawValue, "Verbatim"),
-        (TranscriptOutputStyle.clean.rawValue, "Clean"),
-        (TranscriptOutputStyle.cleanHinglish.rawValue, "Clean + Hinglish")
+        (TranscriptOutputStyle.verbatim.rawValue, "Original"),
+        (TranscriptOutputStyle.clean.rawValue, "English"),
+        (TranscriptOutputStyle.cleanHinglish.rawValue, "Romanized")
     ]
 
     let processingModes = [
@@ -70,7 +70,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
-                Text("Groq is free but English-only. OpenAI supports Hindi + Hinglish.")
+                Text("Both providers support multilingual transcription. Groq is free; OpenAI offers GPT-4 post-processing.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -111,7 +111,7 @@ struct SettingsView: View {
                     SecureField("gsk_...", text: $groqApiKey)
                         .textFieldStyle(.roundedBorder)
 
-                    Text("Free tier: console.groq.com/keys — English only.")
+                    Text("Free tier: console.groq.com/keys — multilingual supported.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -148,7 +148,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
-                Text("Clean + Hinglish removes fillers, fixes grammar, and enforces English characters only.")
+                Text("Romanized writes any spoken language (Hindi, Marathi, etc.) in English letters. English translates everything to English.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -347,10 +347,8 @@ struct SettingsView: View {
         groqApiKey = UserDefaults.standard.string(forKey: "groq_api_key") ?? ""
         provider = UserDefaults.standard.string(forKey: "transcription_provider") ?? TranscriptionProvider.openai.rawValue
         selectedLanguage = UserDefaults.standard.string(forKey: "language") ?? "hi"
-        // Default to verbatim — only style that works without an OpenAI
-        // key. Matches the seed in configureDefaultSettings.
-        outputMode = UserDefaults.standard.string(forKey: "output_mode") ?? TranscriptOutputStyle.verbatim.rawValue
-        processingMode = UserDefaults.standard.string(forKey: "processing_mode") ?? TranscriptProcessingMode.dictation.rawValue
+        outputMode = UserDefaults.standard.string(forKey: "output_mode") ?? TranscriptOutputStyle.cleanHinglish.rawValue
+        processingMode = UserDefaults.standard.string(forKey: "processing_mode") ?? TranscriptProcessingMode.rewrite.rawValue
         let storedPolishBackend = UserDefaults.standard.string(forKey: PolishBackend.userDefaultsKey) ?? PolishBackend.defaultId
         polishBackendId = PolishBackend.legacyGroqModelIds.contains(storedPolishBackend)
             ? PolishBackend.defaultIdGroq
@@ -628,8 +626,8 @@ private struct OnboardingWelcomeStep: View {
                     copy: "Audio + transcripts never leave your device except to your own Whisper provider. No account, no cloud, no telemetry.")
                 bulletRow(
                     icon: "globe",
-                    title: "Hindi, English, Hinglish",
-                    copy: "Speak naturally — the polish layer handles code-switching, fixes grammar, and respects your spoken phrasing.")
+                    title: "Hindi, Marathi, English + more",
+                    copy: "Speak naturally in any language — the polish layer handles code-switching, transliterates to Latin script, and respects your spoken phrasing.")
                 bulletRow(
                     icon: "bolt.fill",
                     title: "Fn-hold, anywhere",
@@ -807,11 +805,11 @@ private struct OnboardingAPIKeyStep: View {
                 providerPill(
                     id: TranscriptionProvider.groq.rawValue,
                     title: "Groq",
-                    sub: "Free · English only")
+                    sub: "Free · Multilingual")
                 providerPill(
                     id: TranscriptionProvider.openai.rawValue,
                     title: "OpenAI",
-                    sub: "Paid · Hindi + English")
+                    sub: "Paid · GPT-4 Polish")
             }
             .padding(4)
             .background(
@@ -830,7 +828,7 @@ private struct OnboardingAPIKeyStep: View {
                         .onChange(of: groqKey) { _ in
                             UserDefaults.standard.set(groqKey, forKey: "groq_api_key")
                         }
-                    Text("Get your free key at [console.groq.com/keys](https://console.groq.com/keys). English-only but ~10× faster than Whisper.")
+                    Text("Get your free key at [console.groq.com/keys](https://console.groq.com/keys). Multilingual supported — Hindi, Marathi, English + more.")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textSecondary)
                         .tint(Theme.accent)
@@ -843,7 +841,7 @@ private struct OnboardingAPIKeyStep: View {
                         .onChange(of: openAIKey) { _ in
                             UserDefaults.standard.set(openAIKey, forKey: "openai_api_key")
                         }
-                    Text("Get your key at [openai.com/api-keys](https://platform.openai.com/api-keys). Supports Hindi + Hinglish transcription.")
+                    Text("Get your key at [openai.com/api-keys](https://platform.openai.com/api-keys). Enables GPT-4 post-processing quality.")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textSecondary)
                         .tint(Theme.accent)

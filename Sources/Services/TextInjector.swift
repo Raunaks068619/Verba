@@ -11,7 +11,7 @@ class TextInjector {
     /// Delivered when injection is suppressed for ANY reason — VoiceFlow
     /// is foreground, no text input focused, etc. The transcript is on
     /// the clipboard so the user can paste manually. AppDelegate uses
-    /// this hook to flash the floating chip's warning state.
+    /// this hook to surface the clipboard fallback state.
     var onInjectionSuppressed: ((String) -> Void)?
 
     private struct PasteboardSnapshot {
@@ -149,7 +149,7 @@ class TextInjector {
 
     /// Common path for suppressed injections: stash transcript on clipboard,
     /// preserve user's previous clipboard for later restore, log the reason,
-    /// fire the callback so the chip can warn the user.
+    /// fire the callback so the chip can explain the clipboard fallback.
     private func suppressInjection(_ text: String, reason: String) {
         let pasteboard = NSPasteboard.general
 

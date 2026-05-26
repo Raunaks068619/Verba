@@ -15,9 +15,10 @@ import Combine
 ///     averaged across the transcript tokens. Weaker than contextual but
 ///     ships with the OS — zero download.
 ///
-/// **Cost**: ~50ms per transcript on Apple Silicon, ~150ms on Intel.
-/// `IndexerService` batches these on a utility queue so the UI stays
-/// responsive.
+/// **Cost**: model preparation is lazy. The app does not download/load
+/// NaturalLanguage assets until Memory sync or semantic chat actually asks
+/// for an embedding. Per-transcript embedding is ~50ms on Apple Silicon,
+/// ~150ms on Intel.
 ///
 /// **Privacy**: everything is on-device. Transcripts never leave the
 /// machine for embedding. (The chat LLM call is a separate concern;
@@ -59,16 +60,13 @@ final class EmbeddingService: ObservableObject {
     /// contextual is preferred if available.
     private var contextualEmbedding: Any?  // NLContextualEmbedding (typed at use)
     private var wordEmbedding: NLEmbedding?
+    private var preparationTask: Task<Void, Never>?
 
     /// `nonisolated` so the singleton can be initialized off the main
     /// actor (Swift's `static let` initializer runs on whichever thread
-    /// first reaches it). Inner Task hops to the main actor before
-    /// touching any @Published state.
-    nonisolated private init() {
-        Task { @MainActor in
-            await self.prepareModel()
-        }
-    }
+    /// first reaches it). Keep init empty so a dashboard view touching
+    /// IndexerService does not eagerly load the embedding model while idle.
+    nonisolated private init() {}
 
     // MARK: - Public API
 
@@ -82,13 +80,9 @@ final class EmbeddingService: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw EmbeddingError.emptyText }
 
-        // Wait for the model to be ready. Avoids the race where the
-        // indexer fires before NLContextualEmbedding finishes loading.
+        await ensurePrepared()
         if !isReady {
-            for _ in 0..<60 where !isReady {  // up to ~6s wait
-                try await Task.sleep(nanoseconds: 100_000_000)  // 100ms
-            }
-            guard isReady else { throw EmbeddingError.notReady }
+            throw EmbeddingError.notReady
         }
 
         // Capture state on the actor, then do CPU work off-actor.
@@ -132,7 +126,25 @@ final class EmbeddingService: ObservableObject {
 
     // MARK: - Preparation
 
+    func ensurePrepared() async {
+        if isReady { return }
+
+        if let preparationTask {
+            await preparationTask.value
+            return
+        }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.prepareModel()
+        }
+        preparationTask = task
+        await task.value
+        preparationTask = nil
+    }
+
     private func prepareModel() async {
+        guard !isReady else { return }
         isPreparing = true
         defer { isPreparing = false }
 

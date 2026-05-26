@@ -99,49 +99,66 @@ final class PermissionService: ObservableObject {
     }
 
     func refreshStatus() {
-        DispatchQueue.main.async {
-            let newMic = self.currentMicrophoneState()
-            let newAx = AXIsProcessTrusted() ? PermissionState.granted : .denied
-            let newInput = self.preflightInputMonitoringAccess() ? PermissionState.granted : .denied
-            let newScreen = self.preflightScreenRecordingAccess() ? PermissionState.granted : .denied
-
-            // Detect granted-transitions before mutating state, so
-            // onPermissionNewlyGranted fires exactly once per flip.
-            self.detectNewlyGranted(pane: .microphone, wasGranted: self.lastAllStates[.microphone] ?? false, isGranted: newMic.isGranted)
-            self.detectNewlyGranted(pane: .accessibility, wasGranted: self.lastAllStates[.accessibility] ?? false, isGranted: newAx.isGranted)
-            self.detectNewlyGranted(pane: .inputMonitoring, wasGranted: self.lastAllStates[.inputMonitoring] ?? false, isGranted: newInput.isGranted)
-            self.detectNewlyGranted(pane: .screenRecording, wasGranted: self.lastAllStates[.screenRecording] ?? false, isGranted: newScreen.isGranted)
-
-            self.lastAllStates[.microphone] = newMic.isGranted
-            self.lastAllStates[.accessibility] = newAx.isGranted
-            self.lastAllStates[.inputMonitoring] = newInput.isGranted
-            self.lastAllStates[.screenRecording] = newScreen.isGranted
-
-            // CRITICAL: Only assign @Published properties when the value
-            // actually changed. @Published fires objectWillChange on EVERY
-            // set — even same-value assignments. Without these guards, every
-            // 2s poll triggers a full SwiftUI view re-evaluation cascade
-            // through MenuBarExtra → EnvironmentObject → all child views.
-            if self.microphoneState != newMic { self.microphoneState = newMic }
-            if self.accessibilityState != newAx { self.accessibilityState = newAx }
-            if self.inputMonitoringState != newInput { self.inputMonitoringState = newInput }
-            if self.screenRecordingState != newScreen { self.screenRecordingState = newScreen }
-            let newWarning = self.currentEnvironmentWarning()
-            if self.environmentWarning != newWarning { self.environmentWarning = newWarning }
-
-            let micDebug = self.currentMicrophoneDebugSnapshot()
-            if micDebug != self.lastMicDebugSnapshot {
-                self.lastMicDebugSnapshot = micDebug
-                print("VoiceFlow microphone status: \(micDebug)")
+        if Thread.isMainThread {
+            performStatusRefresh()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.performStatusRefresh()
             }
         }
     }
 
-    private func detectNewlyGranted(pane: PermissionPane, wasGranted: Bool, isGranted: Bool) {
-        if !wasGranted && isGranted {
-            print("Permission newly granted: \(pane)")
-            onPermissionNewlyGranted?(pane)
+    private func performStatusRefresh() {
+        let newMic = currentMicrophoneState()
+        let newAx = AXIsProcessTrusted() ? PermissionState.granted : .denied
+        let newInput = preflightInputMonitoringAccess() ? PermissionState.granted : .denied
+        let newScreen = preflightScreenRecordingAccess() ? PermissionState.granted : .denied
+
+        var newlyGrantedPanes: [PermissionPane] = []
+        if !(lastAllStates[.microphone] ?? false), newMic.isGranted {
+            newlyGrantedPanes.append(.microphone)
         }
+        if !(lastAllStates[.accessibility] ?? false), newAx.isGranted {
+            newlyGrantedPanes.append(.accessibility)
+        }
+        if !(lastAllStates[.inputMonitoring] ?? false), newInput.isGranted {
+            newlyGrantedPanes.append(.inputMonitoring)
+        }
+        if !(lastAllStates[.screenRecording] ?? false), newScreen.isGranted {
+            newlyGrantedPanes.append(.screenRecording)
+        }
+
+        lastAllStates[.microphone] = newMic.isGranted
+        lastAllStates[.accessibility] = newAx.isGranted
+        lastAllStates[.inputMonitoring] = newInput.isGranted
+        lastAllStates[.screenRecording] = newScreen.isGranted
+
+        // CRITICAL: Only assign @Published properties when the value
+        // actually changed. @Published fires objectWillChange on EVERY
+        // set — even same-value assignments. Without these guards, every
+        // 2s poll triggers a full SwiftUI view re-evaluation cascade
+        // through MenuBarExtra → EnvironmentObject → all child views.
+        if microphoneState != newMic { microphoneState = newMic }
+        if accessibilityState != newAx { accessibilityState = newAx }
+        if inputMonitoringState != newInput { inputMonitoringState = newInput }
+        if screenRecordingState != newScreen { screenRecordingState = newScreen }
+        let newWarning = currentEnvironmentWarning()
+        if environmentWarning != newWarning { environmentWarning = newWarning }
+
+        let micDebug = currentMicrophoneDebugSnapshot()
+        if micDebug != lastMicDebugSnapshot {
+            lastMicDebugSnapshot = micDebug
+            print("VoiceFlow microphone status: \(micDebug)")
+        }
+
+        for pane in newlyGrantedPanes {
+            notifyPermissionNewlyGranted(pane)
+        }
+    }
+
+    private func notifyPermissionNewlyGranted(_ pane: PermissionPane) {
+        print("Permission newly granted: \(pane)")
+        onPermissionNewlyGranted?(pane)
     }
 
     func markMicrophoneOperational() {
@@ -466,11 +483,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // 3s median utterance is a free ~10% latency win.
         whisperService?.prewarmConnections()
         textInjector = TextInjector()
-        // Suppression hook: fires when the transcript can't be injected
-        // (VoiceFlow foreground, no text input focused, etc.). The
-        // transcript is already on the clipboard at this point — we
-        // just flash the warning chip to tell the user where it went
-        // and how to retrieve it.
+        // Suppression hook: fires after a successful transcript when it
+        // can't be injected directly (VoiceFlow foreground, no text input
+        // focused, etc.). The transcript is already on the clipboard, so
+        // surface this as a clipboard fallback instead of a "no input"
+        // transcription failure.
         textInjector?.onInjectionSuppressed = { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -483,7 +500,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 // "YOUR TRANSCRIPT" card via the RunStore observer.
                 if self.onboardingWindow?.isVisible == true { return }
 
-                self.activeFeedbackSurface()?.flashNoInputWarning(durationSeconds: 4.5)
+                self.activeFeedbackSurface()?.flashTranscriptCopied(durationSeconds: 4.5)
             }
         }
         hotKeyListener = HotKeyListener()
@@ -627,6 +644,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         ) { [weak self] _ in
             self?.applyFeedbackSurfacePreference()
         }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyFeedbackSurfacePreference()
+        }
         // App regained focus (typically: user came back from System Settings
         // after granting a permission). Re-poll TCC state so the chip's
         // orange dot disappears the moment they fixed the missing perm.
@@ -679,41 +703,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             UserDefaults.standard.set(TranscriptionProvider.groq.rawValue, forKey: "transcription_provider")
         }
         if UserDefaults.standard.string(forKey: "output_mode") == nil {
-            // Default to .verbatim ("Original") for first-run. This is the
-            // ONLY style that works end-to-end on the free Groq tier
-            // (no OpenAI key required). After the v0.4.0 routing change,
-            // BOTH .clean (English = translation) AND .cleanHinglish
-            // require OpenAI's multilingual STT — defaulting to either
-            // would surface "No OpenAI API key configured" on the user's
-            // very first dictation, before they've had any chance to add
-            // a key. That's the cliff we're avoiding.
-            //
-            // English / Hinglish remain opt-in upsells: users who add an
-            // OpenAI key in Settings see those pills appear in the Output
-            // Style picker, and the dashboard's "Unlock English+Hinglish"
-            // CTA points them at the right setting.
-            UserDefaults.standard.set(TranscriptOutputStyle.verbatim.rawValue, forKey: "output_mode")
-        } else {
-            // Migration for users upgrading from v0.3.x → v0.4.0+:
-            // they may have `output_mode = "clean"` persisted (the old
-            // default that worked on Groq pre-v0.4.0). After v0.4.0,
-            // .clean = translation = needs OpenAI. If they don't have an
-            // OpenAI key configured, snap them to verbatim so the next
-            // dictation doesn't fail. Doesn't touch users who DO have a
-            // key — they get the upgraded translation behavior they
-            // implicitly opted into by having a key.
-            let stored = UserDefaults.standard.string(forKey: "output_mode") ?? ""
-            let openAIKey = UserDefaults.standard.string(forKey: "openai_api_key") ?? ""
-            let needsOpenAI = stored == TranscriptOutputStyle.clean.rawValue
-                || stored == TranscriptOutputStyle.cleanHinglish.rawValue
-                || stored == TranscriptOutputStyle.translateEnglish.rawValue
-            if needsOpenAI && openAIKey.isEmpty {
-                print("VoiceFlow: migrating output_mode '\(stored)' → 'verbatim' (no OpenAI key, would fail)")
-                UserDefaults.standard.set(TranscriptOutputStyle.verbatim.rawValue, forKey: "output_mode")
-            }
+            // Default to Romanized on first run — Groq's whisper-large-v3
+            // handles multilingual out of the box, so there's no cliff.
+            // Users speaking Hindi, Marathi, or English all get a useful
+            // result immediately without configuring anything.
+            UserDefaults.standard.set(TranscriptOutputStyle.cleanHinglish.rawValue, forKey: "output_mode")
         }
         if UserDefaults.standard.string(forKey: "processing_mode") == nil {
-            UserDefaults.standard.set(TranscriptProcessingMode.dictation.rawValue, forKey: "processing_mode")
+            UserDefaults.standard.set(TranscriptProcessingMode.rewrite.rawValue, forKey: "processing_mode")
         }
         if let storedPolishBackend = UserDefaults.standard.string(forKey: PolishBackend.userDefaultsKey),
            PolishBackend.legacyGroqModelIds.contains(storedPolishBackend) {
@@ -871,6 +868,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         permissionService.refreshStatus()
         let allGranted = permissionService.allRequiredGranted
         activeFeedbackSurface()?.setPermissionsAvailable(allGranted)
+        updatePermissionPollingState()
 
         // Belt-and-suspenders: re-check after 0.6s. TCC sometimes lags
         // refreshStatus; a single poll right after grant can read stale.
@@ -880,6 +878,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             self.permissionService.refreshStatus()
             let recheck = self.permissionService.allRequiredGranted
             self.activeFeedbackSurface()?.setPermissionsAvailable(recheck)
+            self.updatePermissionPollingState()
         }
     }
 
@@ -892,7 +891,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     /// per check.
     private var permissionPollTimer: Timer?
     func startPermissionPolling() {
-        stopPermissionPolling()
+        guard permissionPollTimer == nil else { return }
+        guard !permissionService.allOnboardingPermissionsGranted else {
+            stopPermissionPolling()
+            return
+        }
         permissionPollTimer = Timer.scheduledTimer(
             withTimeInterval: 3.0,
             repeats: true
@@ -903,6 +906,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     func stopPermissionPolling() {
         permissionPollTimer?.invalidate()
         permissionPollTimer = nil
+    }
+
+    private func updatePermissionPollingState() {
+        if permissionService.allOnboardingPermissionsGranted {
+            stopPermissionPolling()
+        } else {
+            startPermissionPolling()
+        }
     }
 
     func openMainWindow() {
@@ -1704,16 +1715,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         guard UserDefaults.standard.bool(forKey: Self.realtimeStreamingKey) else { return }
 
-        // Force the BATCH path for the Hinglish style. The OpenAI Realtime
-        // API doesn't honor `language=hi` as reliably as the batch endpoint
-        // — for ambiguous Hindi/Urdu speech it sometimes returns Arabic-
-        // script Urdu instead of Devanagari Hindi or Latin Hinglish, which
-        // breaks the bilingual normalizer's transliteration assumptions.
-        // The batch transcribeWithProvider call respects language=hi
-        // consistently, so we fall back to it for Hinglish dictations.
+        // Force the BATCH path for the Romanized style. The OpenAI Realtime
+        // API is less consistent on multilingual audio than the batch endpoint
+        // — for ambiguous Hindi/Urdu/Marathi speech it occasionally produces
+        // non-Latin script output that breaks the bilingual normalizer.
+        // The batch path with whisper-large-v3 auto-detect is more reliable.
         let outputModeRaw = UserDefaults.standard.string(forKey: "output_mode") ?? ""
         if outputModeRaw == TranscriptOutputStyle.cleanHinglish.rawValue {
-            print("Realtime stream disabled for Hinglish style — using batch path for reliable lang=hi")
+            print("Realtime stream disabled for Romanized style — using batch path for multilingual reliability")
             return
         }
 

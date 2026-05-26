@@ -480,17 +480,15 @@ struct MainDashboardView: View {
     ]
 
     // User-facing labels are deliberately plain ("Original", "English",
-    // "Hinglish") instead of the developer-y enum names. The output style
-    // IS the output contract — we communicate that contract directly:
-    //   Original  — raw transcription, no transformation
-    //   English   — anything spoken gets translated to English
-    //   Hinglish  — bilingual transcript preserved, Devanagari → Latin
-    // The internal raw values stay (.verbatim / .clean / .clean_hinglish)
-    // so existing UserDefaults parse cleanly across the relabel.
+    // Output mode labels — communicate the output contract directly:
+    //   Original   — raw transcription, no transformation
+    //   English    — anything spoken gets translated to English
+    //   Romanized  — any language (Hindi, Marathi, etc.) written in English letters
+    // Internal raw values stay unchanged so existing UserDefaults parse cleanly.
     private let outputModes: [(id: String, label: String)] = [
         (TranscriptOutputStyle.verbatim.rawValue,      "Original"),
         (TranscriptOutputStyle.clean.rawValue,         "English"),
-        (TranscriptOutputStyle.cleanHinglish.rawValue, "Hinglish")
+        (TranscriptOutputStyle.cleanHinglish.rawValue, "Romanized")
     ]
 
     /// Cloud polish options. Filtered by tier:
@@ -748,58 +746,12 @@ struct MainDashboardView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 420, alignment: .leading)
 
-                // Hinglish upsell — surfaces the "Groq is free, OpenAI key
-                // unlocks Hindi/Marathi/100+ languages" story directly on the
-                // hero where users actually look. Without this the upgrade
-                // path is buried in Settings and Hindi-speaking users churn
-                // assuming the app can't speak their language.
-                hinglishCallout
             }
             Spacer()
         }
         .padding(Theme.Space.xl)
         .frame(maxWidth: .infinity, alignment: .leading)
         .themedAnimatedHeroCard()
-    }
-
-    /// Inline upsell pill inside the dark hero card.
-    /// Tap → jumps to Settings (where they can paste an OpenAI key).
-    private var hinglishCallout: some View {
-        Button {
-            NotificationCenter.default.post(
-                name: Notification.Name("VoiceFlow.SelectTab"),
-                object: nil,
-                userInfo: ["tab": "settings"]
-            )
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Theme.accent)
-                Text("Speak Hindi or Marathi?")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Theme.textOnDark)
-                Text("Unlock Hinglish + 100+ languages with your OpenAI key")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.textOnDark.opacity(0.65))
-                    .lineLimit(1)
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(Theme.accent)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.white.opacity(0.06))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Theme.accent.opacity(0.45), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .help("Add an OpenAI API key in Settings to dictate in Hindi, Marathi, and 100+ other languages.")
     }
 
     // MARK: Home — Stats (compact right-side card)
@@ -985,36 +937,10 @@ struct MainDashboardView: View {
                 .onChange(of: selectedLanguage) { newValue in
                     UserDefaults.standard.set(newValue, forKey: "language")
                 }
-                .disabled(isOnGroqTier)
-                .opacity(isOnGroqTier ? 0.45 : 1.0)
-
-                if isOnGroqTier {
-                    Text("Groq's free tier supports English only. Add your OpenAI API key in Settings → Provider to unlock Hindi and 100+ other languages here.")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text("Whisper's language hint for raw transcription. Auto-detect picks per recording. Lock to Hindi or English if you stay in one — slightly higher accuracy when the decoder doesn't have to guess.")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        // Force English when locked to Groq tier — drops a one-shot
-        // .onChange-style write so the persisted UserDefaults value
-        // matches the locked UI state, even if user had previously
-        // selected Hindi on a different provider.
-        .onAppear {
-            if isOnGroqTier && selectedLanguage != "en" {
-                selectedLanguage = "en"
-                UserDefaults.standard.set("en", forKey: "language")
-            }
-        }
-        .onChange(of: provider) { _ in
-            if isOnGroqTier && selectedLanguage != "en" {
-                selectedLanguage = "en"
-                UserDefaults.standard.set("en", forKey: "language")
+                Text("Whisper's language hint for raw transcription. Auto-detect picks per recording. Lock to Hindi or English if you stay in one — slightly higher accuracy when the decoder doesn't have to guess.")
+                    .font(.system(size: 11))
+                    .foregroundColor(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -1026,24 +952,10 @@ struct MainDashboardView: View {
         provider == TranscriptionProvider.groq.rawValue && openAIKey.isEmpty
     }
 
-    /// Output styles available given the current tier.
-    ///
-    /// **Groq tier** (free tier, no OpenAI key): **Original** + **English**.
-    /// English on Groq tier is an English-only cleanup path (Groq STT +
-    /// Groq llama polish) — no translation. Fixes filler words, grammar,
-    /// and the "every pause becomes a period" problem that pure-Whisper
-    /// output exhibits. **Hinglish** is hidden because Groq's Whisper is
-    /// English-only in practice — Hindi audio comes back garbled there.
-    ///
-    /// **OpenAI tier**: all three styles. English becomes a translation
-    /// path (any input → English output), Hinglish does bilingual preserve.
+    /// All output styles are available on both tiers. Groq uses
+    /// whisper-large-v3 for the multilingual paths (Romanized, English
+    /// translation) — no OpenAI key required.
     private var visibleOutputModes: [(id: String, label: String)] {
-        if isOnGroqTier {
-            return outputModes.filter {
-                $0.id == TranscriptOutputStyle.verbatim.rawValue
-                    || $0.id == TranscriptOutputStyle.clean.rawValue
-            }
-        }
         return outputModes
     }
 
@@ -1847,14 +1759,10 @@ struct MainDashboardView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(Theme.textPrimary)
 
-                // Pill picker. Labels reflect the actual capability split:
-                // Groq is fast English (we lock language to English on this
-                // tier — see languageCard); OpenAI unlocks Hinglish + 100+
-                // languages.
                 ThemedPillTabs(
                     options: [
-                        (id: TranscriptionProvider.groq.rawValue,   label: "Groq · Fast English"),
-                        (id: TranscriptionProvider.openai.rawValue, label: "OpenAI · Multilingual")
+                        (id: TranscriptionProvider.groq.rawValue,   label: "Groq · Free · Multilingual"),
+                        (id: TranscriptionProvider.openai.rawValue, label: "OpenAI · GPT-4 Polish")
                     ],
                     selection: $provider
                 )
@@ -1900,20 +1808,19 @@ struct MainDashboardView: View {
                 Text("Free tier active")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Theme.textPrimary)
-                Text("Fast English dictation, no setup needed.")
+                Text("Multilingual dictation (Hindi, Marathi, English + more), no setup needed.")
                     .font(.system(size: 11))
                     .foregroundColor(Theme.textSecondary)
             }
             Spacer()
         }
 
-        // OpenAI upgrade marketing pitch — visible by default, opens to
-        // a key-entry field when user expands.
+        // Optional OpenAI key — enables GPT-4 polish and higher accuracy.
         DisclosureGroup(
             isExpanded: $showOpenAIUpgrade,
             content: {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Add your OpenAI API key to unlock multilingual transcription, Hinglish, and higher-quality polish via GPT-4. You pay OpenAI directly — typically ~$0.18/hour of audio, much cheaper than Wispr Flow's flat subscription.")
+                    Text("Add your OpenAI API key to use GPT-4 for post-processing. You pay OpenAI directly — typically ~$0.18/hour of audio. Multilingual transcription (Hindi, Marathi, etc.) already works on the free Groq tier.")
                         .font(.system(size: 11))
                         .foregroundColor(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1924,10 +1831,6 @@ struct MainDashboardView: View {
                         help: "Get a key at platform.openai.com/api-keys",
                         text: $openAIKey,
                         onCommit: {
-                            // Trim defensively. Pasting from the OpenAI
-                            // dashboard often picks up trailing newlines
-                            // that the API rejects with "Incorrect API
-                            // key" even on otherwise-valid keys.
                             let trimmed = openAIKey.trimmingCharacters(in: .whitespacesAndNewlines)
                             openAIKey = trimmed
                             UserDefaults.standard.set(trimmed, forKey: "openai_api_key")
@@ -1942,7 +1845,7 @@ struct MainDashboardView: View {
                     Image(systemName: "sparkles")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(Theme.accent)
-                    Text("Want Hinglish + 100+ languages?")
+                    Text("Upgrade to GPT-4 polish")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(Theme.textPrimary)
                 }
@@ -2053,23 +1956,9 @@ struct MainDashboardView: View {
     private var outputStyleCard: some View {
         cardContainer {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Output Style")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
-                    Spacer()
-                    if isOnGroqTier {
-                        Text("Hinglish needs OpenAI")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(Theme.textTertiary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Theme.divider))
-                    }
-                }
-                // Groq tier shows Original + English (English-only cleanup,
-                // no translation). Hinglish is gated behind an OpenAI key
-                // because Groq's Whisper can't transcribe Hindi audio.
+                Text("Output Style")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Theme.textPrimary)
                 ThemedPillTabs(
                     options: visibleOutputModes.map { (id: $0.id, label: $0.label) },
                     selection: $outputMode
@@ -2093,15 +1982,10 @@ struct MainDashboardView: View {
         .onChange(of: openAIKey) { _ in reconcileOutputModeForTier() }
     }
 
-    /// Force `outputMode` to a value that's available in the current
-    /// tier. No-op when the current selection is already valid.
-    private func reconcileOutputModeForTier() {
-        let availableIds = visibleOutputModes.map { $0.id }
-        guard !availableIds.contains(outputMode) else { return }
-        let fallback = TranscriptOutputStyle.verbatim.rawValue
-        outputMode = fallback
-        UserDefaults.standard.set(fallback, forKey: "output_mode")
-    }
+    /// No-op — all output modes work on all tiers. Kept for call-site
+    /// compatibility; the .onAppear / .onChange wiring remains in place
+    /// in case tier-specific logic is added in the future.
+    private func reconcileOutputModeForTier() {}
 
     /// Mode-specific helper text — single source of truth for what each
     /// output contract delivers. The `.clean` description is tier-aware:
@@ -2110,16 +1994,12 @@ struct MainDashboardView: View {
     private var outputStyleHelperText: String {
         switch TranscriptOutputStyle(rawValue: outputMode) ?? .cleanHinglish {
         case .verbatim:
-            return "Dictation keeps the raw transcript. Rewrite runs the polish model on the same Original transcript for cleaner final intent text. The Language picker controls Whisper's language hint in this mode."
+            return "Raw transcript — no transformation. Dictation injects as-is; Rewrite still runs the polish model for cleaner phrasing. The Language picker controls Whisper's language hint in this mode."
         case .clean:
-            if isOnGroqTier {
-                return "English cleanup — removes fillers, fixes grammar, and normalizes punctuation so natural pauses don't become full stops. Speak English; Hindi will come through garbled on the free tier (add an OpenAI key in Settings → Provider for translation + Hinglish)."
-            }
-            return "Output is always English. If you speak Hindi (or any other language), it gets translated. If you speak English, it just gets fillers + grammar cleaned + punctuation normalized."
+            return "Output is always English. Speak any language (Hindi, Marathi, English) — it gets translated. Works on both Groq (free) and OpenAI."
         case .cleanHinglish:
-            return "Bilingual transcripts preserved as-spoken — English stays English, Hindi gets transliterated to Latin script (\u{201C}mera naam Raunak hai\u{201D}). Nothing translated."
+            return "Romanized — any language written in English letters. Hindi: \u{201C}mera naam Raunak hai\u{201D}. Marathi: \u{201C}me tula bhetnar\u{201D}. No translation — the meaning stays in your language, just in Latin script. Works on Groq (free) and OpenAI."
         case .translateEnglish:
-            // Hidden from picker; same contract as .clean. Kept for back-compat.
             return "Translates any spoken language to natural English."
         }
     }
@@ -3085,27 +2965,9 @@ struct PrismGradientHeader: View {
 
 // MARK: - SidebarPremiumBlock
 
-/// Sidebar upsell card that nudges users to add an OpenAI API key for
-/// Hinglish + multilingual support.
-///
-/// Why the visual treatment is intentionally louder than SidebarStarBlock:
-/// the GitHub star block is a community ask (low conversion stakes); this
-/// one is the primary monetization-adjacent surface — without an OpenAI
-/// key the app is English-only via Groq, and Hindi-speaking users churn
-/// in 30 seconds if they don't see this exists.
-///
-/// Composition (top → bottom):
-///   1. PrismGradientHeader — animated prism block, sparkles centered.
-///      Approximates componentry.fun's "Dither Prism Hero" without Metal.
-///   2. "Unlock Hinglish" headline + arrow.
-///   3. Sub-line: "Hindi · Marathi · 100+ languages" — names users search.
-///   4. Footer hint: "Add OpenAI key in Settings →".
-///
-/// The whole card is wrapped in `.borderBeam(...)` — a slow cyan comet
-/// travels around the perimeter. Two animations layered (prism rotation
-/// + border beam) tested at low frequencies (12s and 5s respectively)
-/// stay below the perception threshold for "distracting". They register
-/// as "this thing is alive" without pulling focus.
+/// Sidebar card that nudges users to upgrade to OpenAI for GPT-4 polish.
+/// Multilingual transcription already works on the free Groq tier, so
+/// this is purely about higher-quality post-processing, not gating.
 struct SidebarPremiumBlock: View {
     @State private var isHovered = false
 
@@ -3123,7 +2985,7 @@ struct SidebarPremiumBlock: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 4) {
-                        Text("Unlock Hinglish")
+                        Text("Upgrade to GPT-4 Polish")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundColor(Theme.textPrimary)
                         Spacer()
@@ -3135,7 +2997,7 @@ struct SidebarPremiumBlock: View {
                             .animation(.easeOut(duration: 0.15), value: isHovered)
                     }
 
-                    Text("Hindi · Marathi · 100+ languages")
+                    Text("Higher quality post-processing")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(Theme.textPrimary.opacity(0.85))
                         .lineLimit(1)
@@ -3178,7 +3040,7 @@ struct SidebarPremiumBlock: View {
                 isHovered = hovering
             }
         }
-        .help("Add an OpenAI API key in Settings to unlock Hindi, Marathi, and 100+ other languages.")
+        .help("Add an OpenAI API key in Settings for GPT-4 post-processing quality.")
     }
 }
 
