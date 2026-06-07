@@ -11,10 +11,8 @@ struct MenuBarView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                Image(systemName: "waveform.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(.accentColor)
-                Text("VoiceFlow")
+                VFBrandLogo(size: 26, variant: .automatic, cornerRadius: 6)
+                Text(AppBrand.name)
                     .font(.headline)
                 Spacer()
             }
@@ -50,7 +48,7 @@ struct MenuBarView: View {
 
             Divider()
 
-            Button("Open VoiceFlow") {
+            Button("Open Verba") {
                 appDelegate.openMainWindow()
             }
             .keyboardShortcut("o")
@@ -62,7 +60,7 @@ struct MenuBarView: View {
 
             Divider()
 
-            Button("Quit VoiceFlow") {
+            Button("Quit Verba") {
                 appDelegate.allowTermination = true
                 NSApplication.shared.terminate(nil)
             }

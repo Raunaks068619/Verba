@@ -1,0 +1,64 @@
+<svg width="808" height="176" viewBox="0 0 808 176" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="vf_base_gradient" x1="0" y1="0" x2="808" y2="176" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#020206"/>
+      <stop offset="0.52" stop-color="#090928"/>
+      <stop offset="1" stop-color="#030308"/>
+    </linearGradient>
+    <radialGradient id="vf_violet_glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(436.32 184.8) rotate(-90) scale(581.76 581.76)">
+      <stop offset="0" stop-color="#6C5CFF" stop-opacity="0.84"/>
+      <stop offset="0.38" stop-color="#3834AD" stop-opacity="0.50"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vf_blue_glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(420.16 49.28) rotate(-90) scale(468.64 468.64)">
+      <stop offset="0" stop-color="#252E85" stop-opacity="0.62"/>
+      <stop offset="0.42" stop-color="#171B52" stop-opacity="0.24"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="vf_surface_falloff" x1="0" y1="88" x2="808" y2="88" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#18150D" stop-opacity="0.88"/>
+      <stop offset="0.5" stop-color="#18150D" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#18150D" stop-opacity="0.74"/>
+    </linearGradient>
+    <clipPath id="vf_card_clip">
+      <rect width="808" height="176" rx="20"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#vf_card_clip)">
+    <rect width="808" height="176" fill="#18150D"/>
+    <rect width="808" height="176" fill="url(#vf_base_gradient)"/>
+    <rect width="808" height="176" fill="url(#vf_violet_glow)" style="mix-blend-mode:screen"/>
+    <rect width="808" height="176" fill="url(#vf_blue_glow)" style="mix-blend-mode:screen"/>
+    <rect width="808" height="176" fill="url(#vf_surface_falloff)"/>
+    <g fill="#EBEDFF">
+      <circle cx="274.72" cy="21.12" r="0.60" opacity="0.35"/>
+      <circle cx="323.20" cy="14.08" r="0.70" opacity="0.28"/>
+      <circle cx="387.84" cy="28.16" r="0.55" opacity="0.34"/>
+      <circle cx="468.64" cy="17.60" r="0.65" opacity="0.30"/>
+      <circle cx="541.36" cy="31.68" r="0.55" opacity="0.26"/>
+      <circle cx="226.24" cy="49.28" r="0.50" opacity="0.30"/>
+      <circle cx="290.88" cy="56.32" r="0.70" opacity="0.38"/>
+      <circle cx="363.60" cy="52.80" r="0.55" opacity="0.32"/>
+      <circle cx="420.16" cy="63.36" r="0.75" opacity="0.42"/>
+      <circle cx="500.96" cy="54.56" r="0.50" opacity="0.31"/>
+      <circle cx="581.76" cy="59.84" r="0.60" opacity="0.28"/>
+      <circle cx="258.56" cy="84.48" r="0.60" opacity="0.32"/>
+      <circle cx="331.28" cy="89.76" r="0.50" opacity="0.27"/>
+      <circle cx="395.92" cy="82.72" r="0.75" opacity="0.40"/>
+      <circle cx="460.56" cy="93.28" r="0.55" opacity="0.34"/>
+      <circle cx="525.20" cy="84.48" r="0.65" opacity="0.36"/>
+      <circle cx="614.08" cy="91.52" r="0.50" opacity="0.24"/>
+      <circle cx="307.04" cy="116.16" r="0.60" opacity="0.34"/>
+      <circle cx="371.68" cy="123.20" r="0.50" opacity="0.28"/>
+      <circle cx="436.32" cy="116.16" r="0.80" opacity="0.45"/>
+      <circle cx="492.88" cy="126.72" r="0.55" opacity="0.36"/>
+      <circle cx="565.60" cy="119.68" r="0.50" opacity="0.25"/>
+      <circle cx="347.44" cy="147.84" r="0.60" opacity="0.30"/>
+      <circle cx="404.00" cy="154.88" r="0.50" opacity="0.28"/>
+      <circle cx="476.72" cy="147.84" r="0.65" opacity="0.36"/>
+      <circle cx="549.44" cy="144.32" r="0.55" opacity="0.24"/>
+    </g>
+    <path d="M371.68 101.12C373.03 106.50 375.30 108.77 380.68 110.12C375.30 111.47 373.03 113.74 371.68 119.12C370.33 113.74 368.06 111.47 362.68 110.12C368.06 108.77 370.33 106.50 371.68 101.12Z" fill="#EBEBFF" opacity="0.58"/>
+    <path d="M509.04 70.44C510.09 74.62 511.82 76.35 516.04 77.44C511.82 78.49 510.09 80.22 509.04 84.44C507.99 80.22 506.26 78.49 502.04 77.44C506.26 76.35 507.99 74.62 509.04 70.44Z" fill="#EBEBFF" opacity="0.46"/>
+  </g>
+</svg>

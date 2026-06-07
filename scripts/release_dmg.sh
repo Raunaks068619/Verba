@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
-# VoiceFlow Release Build Script
+# Verba Release Build Script
 # -----------------------------------------------------------------------------
 #
 # Usage:
@@ -29,11 +29,13 @@ VERSION=""
 APP_PATH=""
 PROJECT="${XCODE_PROJECT:-VoiceFlow.xcodeproj}"
 SCHEME="${XCODE_SCHEME:-VoiceFlow}"
+APP_NAME="${APP_NAME:-Verba}"
+APP_BUNDLE_NAME="${APP_BUNDLE_NAME:-${APP_NAME}.app}"
 
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/release_dmg.sh --version <vX.Y.Z> [--app-path <path/to/VoiceFlow.app>]
+  scripts/release_dmg.sh --version <vX.Y.Z> [--app-path <path/to/Verba.app>]
 
 Environment variables for signed/notarized builds (all optional):
   DEVELOPER_ID                   Full identity name (e.g. "Developer ID Application: Jane Doe (ABC123)")
@@ -88,14 +90,14 @@ DIST_DIR="dist"
 BUILD_DIR="build"
 DERIVED_DATA="${BUILD_DIR}/DerivedData"
 STAGE_DIR="${BUILD_DIR}/dmg-stage"
-PRODUCT_APP="${DERIVED_DATA}/Build/Products/Release/VoiceFlow.app"
+PRODUCT_APP="${DERIVED_DATA}/Build/Products/Release/${APP_BUNDLE_NAME}"
 
 case "${SIGNING_MODE}" in
   notarized)    DMG_SUFFIX="" ;;
   signed_only)  DMG_SUFFIX="-signed" ;;
   adhoc)        DMG_SUFFIX="-unsigned" ;;
 esac
-DMG_PATH="${DIST_DIR}/VoiceFlow-${VERSION}${DMG_SUFFIX}.dmg"
+DMG_PATH="${DIST_DIR}/${APP_NAME}-${VERSION}${DMG_SUFFIX}.dmg"
 
 mkdir -p "${DIST_DIR}" "${BUILD_DIR}"
 rm -rf "${STAGE_DIR}" "${DMG_PATH}"
@@ -147,7 +149,7 @@ fi
 
 echo "==> Creating DMG staging directory"
 mkdir -p "${STAGE_DIR}"
-cp -R "${APP_PATH}" "${STAGE_DIR}/VoiceFlow.app"
+cp -R "${APP_PATH}" "${STAGE_DIR}/${APP_BUNDLE_NAME}"
 ln -s /Applications "${STAGE_DIR}/Applications"
 
 # Include first-run helper only for ad-hoc builds — signed/notarized users
@@ -158,7 +160,7 @@ if [[ "${SIGNING_MODE}" == "adhoc" && -f "scripts/first_run.command" ]]; then
 fi
 
 echo "==> Creating DMG"
-hdiutil create -volname "VoiceFlow" -srcfolder "${STAGE_DIR}" -ov -format UDZO "${DMG_PATH}"
+hdiutil create -volname "${APP_NAME}" -srcfolder "${STAGE_DIR}" -ov -format UDZO "${DMG_PATH}"
 
 # -----------------------------------------------------------------------------
 # Sign DMG (required for notarization)

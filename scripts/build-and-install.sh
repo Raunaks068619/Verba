@@ -3,13 +3,14 @@ set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$PROJECT_DIR/build/DerivedData"
-APP_NAME="VoiceFlow"
+PROJECT_NAME="VoiceFlow"
+APP_NAME="Verba"
 INSTALL_DIR="/Applications"
 
 echo "Building $APP_NAME (Release)..."
 xcodebuild \
-  -project "$PROJECT_DIR/$APP_NAME.xcodeproj" \
-  -scheme "$APP_NAME" \
+  -project "$PROJECT_DIR/$PROJECT_NAME.xcodeproj" \
+  -scheme "$PROJECT_NAME" \
   -configuration Release \
   -derivedDataPath "$BUILD_DIR" \
   build 2>&1 | tail -20

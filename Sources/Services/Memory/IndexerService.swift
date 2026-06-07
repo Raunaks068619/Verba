@@ -64,6 +64,10 @@ final class IndexerService: ObservableObject {
     /// does not compute embeddings or call an LLM.
     func start() {
         Task { @MainActor in
+            // Memory is scoped to VoiceFlow's own dictations. Drop any
+            // external AI-agent sessions that older builds may have
+            // imported, so the corpus is transcription-only.
+            memory.purgeAgentSessions()
             await refreshCounts()
         }
     }
@@ -147,21 +151,21 @@ final class IndexerService: ObservableObject {
 
     // MARK: - Backfill
 
-    private func backfillEmbeddingsAndEntities(force: Bool = false) async {
+    private func backfillEmbeddingsAndEntities(force: Bool = false, includeAgentContext: Bool = false) async {
         let modelTag = embedder.modelKind.rawValue == "none"
             ? "pending"
             : modelTagFor(embedder.modelKind)
 
         // Embeddings — runs without one (or with a stale model tag).
-        let needsEmb = memory.unindexedRunIDs(currentModel: modelTag)
+        let needsEmb = memory.unindexedRunIDs(currentModel: modelTag, includeAgentContext: includeAgentContext)
         // Entities — runs that have no entity links yet.
-        let needsEnt = memory.unentityRunIDs()
+        let needsEnt = memory.unentityRunIDs(includeAgentContext: includeAgentContext)
         // Union for accurate progress reporting.
         let allPending = Array(Set(needsEmb).union(Set(needsEnt))).sorted()
 
         guard !allPending.isEmpty else {
             status = .idle
-            await refreshCounts()
+            await refreshCounts(includeAgentContext: includeAgentContext)
             return
         }
 
@@ -170,26 +174,26 @@ final class IndexerService: ObservableObject {
 
         var done = 0
         for runID in allPending {
-            await indexSingleRun(runID: runID)
+            await indexSingleRun(runID: runID, includeAgentContext: includeAgentContext)
             done += 1
             // Republish status without re-allocating the whole queue.
             status = .indexing(done: done, total: allPending.count)
         }
 
         status = .idle
-        await refreshCounts()
+        await refreshCounts(includeAgentContext: includeAgentContext)
     }
 
     /// Index a single run: compute its embedding + extract entities.
     /// Idempotent — if either piece is already done, that step skips.
-    private func indexSingleRun(runID: String) async {
+    private func indexSingleRun(runID: String, includeAgentContext: Bool) async {
         guard let text = memory.transcriptText(for: runID), !text.isEmpty else {
             return
         }
 
         // 1. Embedding (skip if up-to-date).
         let modelTag = modelTagFor(embedder.modelKind)
-        if needsEmbedding(runID: runID, currentModel: modelTag) {
+        if needsEmbedding(runID: runID, currentModel: modelTag, includeAgentContext: includeAgentContext) {
             do {
                 let result = try await embedder.embed(text)
                 memory.setEmbedding(runID: runID, vec: result.vec, model: result.model)
@@ -201,8 +205,11 @@ final class IndexerService: ObservableObject {
         }
 
         // 2. Entity extraction (skip if we already have entries).
-        if needsEntities(runID: runID) {
-            let entities = await extractEntities(from: text)
+        if needsEntities(runID: runID, includeAgentContext: includeAgentContext) {
+            let entities = enrichWithFolderEntity(
+                await extractEntities(from: text),
+                for: runID
+            )
             memory.setEntities(forRun: runID, entities: entities)
         }
     }
@@ -338,17 +345,44 @@ final class IndexerService: ObservableObject {
 
     // MARK: - Helpers
 
-    private func needsEmbedding(runID: String, currentModel: String) -> Bool {
+    private func needsEmbedding(runID: String, currentModel: String, includeAgentContext: Bool) -> Bool {
         // The simplest correct check: ask MemoryStore. The
         // unindexedRunIDs query already encodes "no embedding OR stale
         // model"; we just need to scope it to one run.
-        let ids = memory.unindexedRunIDs(currentModel: currentModel)
+        let ids = memory.unindexedRunIDs(currentModel: currentModel, includeAgentContext: includeAgentContext)
         return ids.contains(runID)
     }
 
-    private func needsEntities(runID: String) -> Bool {
-        let ids = memory.unentityRunIDs()
+    private func needsEntities(runID: String, includeAgentContext: Bool) -> Bool {
+        let ids = memory.unentityRunIDs(includeAgentContext: includeAgentContext)
         return ids.contains(runID)
+    }
+
+    private func enrichWithFolderEntity(
+        _ entities: [(id: String, label: String, type: String)],
+        for runID: String
+    ) -> [(id: String, label: String, type: String)] {
+        guard
+            let item = memory.getRun(id: runID),
+            item.isAgentSession,
+            let folderPath = item.folderPath,
+            !folderPath.isEmpty
+        else { return entities }
+
+        let label = item.folderDisplayName ?? URL(fileURLWithPath: folderPath).lastPathComponent
+        let folderEntity = (
+            id: "folder-\(Self.slug(folderPath))",
+            label: label.isEmpty ? folderPath : label,
+            type: "project"
+        )
+
+        var seen = Set<String>()
+        var merged: [(id: String, label: String, type: String)] = []
+        for entity in [folderEntity] + entities {
+            guard seen.insert(entity.id).inserted else { continue }
+            merged.append(entity)
+        }
+        return Array(merged.prefix(9))
     }
 
     private func modelTagFor(_ kind: EmbeddingService.ModelKind) -> String {
@@ -373,19 +407,19 @@ final class IndexerService: ObservableObject {
         return parts.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 
-    func refreshCounts() async {
-        indexedCount = memory.runCount()
-        pendingCount = pendingWorkCount()
+    func refreshCounts(includeAgentContext: Bool = false) async {
+        indexedCount = memory.runCount(includeAgentContext: includeAgentContext)
+        pendingCount = pendingWorkCount(includeAgentContext: includeAgentContext)
     }
 
-    private func pendingWorkCount() -> Int {
+    private func pendingWorkCount(includeAgentContext: Bool = false) -> Int {
         let modelTag = embedder.modelKind.rawValue == "none"
             ? "pending"
             : modelTagFor(embedder.modelKind)
-        let derivedPending = Set(memory.unindexedRunIDs(currentModel: modelTag))
-            .union(Set(memory.unentityRunIDs()))
+        let derivedPending = Set(memory.unindexedRunIDs(currentModel: modelTag, includeAgentContext: includeAgentContext))
+            .union(Set(memory.unentityRunIDs(includeAgentContext: includeAgentContext)))
             .count
-        let runFilePending = max(0, runStore.summaries.count - memory.runCount())
+        let runFilePending = max(0, runStore.summaries.count - memory.runCount(includeAgentContext: false))
         return runFilePending + derivedPending
     }
 }

@@ -20,6 +20,10 @@ import AppKit
 /// suggests typical users land at 30-80 nodes so we don't optimize
 /// pre-emptively.
 struct KnowledgeGraphView: View {
+    private static let graphFrameRate: TimeInterval = 1.0 / 18.0
+    private static let fullLabelNodeThreshold = 45
+    private static let crowdedLabelLimit = 36
+
     @StateObject private var service = KnowledgeGraphService.shared
     @StateObject private var simulation = ForceSimulation()
 
@@ -143,17 +147,22 @@ struct KnowledgeGraphView: View {
     }
 
     private var graphHeader: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: Theme.Space.sm) {
                 Text("Memory")
-                    .font(.system(size: 26, weight: .semibold, design: .serif))
+                    .font(.vfPageTitle)
                     .foregroundColor(Theme.textPrimary)
-                Text("Your transcriptions, connected and queryable.")
-                    .font(.system(size: 13))
-                    .foregroundColor(Theme.textSecondary)
+                VFBadge(label: "Local", style: .plan)
+                if service.graph.isDisplayLimited {
+                    VFBadge(
+                        label: "Top \(service.graph.nodes.count) of \(service.graph.totalNodeCount)",
+                        style: .plan
+                    )
+                    .help("The graph renders the highest-signal entities for performance. Search and Ask Memory still use the full Memory corpus.")
+                }
+                Spacer()
+                syncControl
             }
-            Spacer()
-            syncControl
         }
     }
 
@@ -165,37 +174,33 @@ struct KnowledgeGraphView: View {
             case .idle:
                 if service.pendingSyncCount > 0 {
                     Text("\(service.pendingSyncCount) unsynced")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.vfCaption)
                         .foregroundColor(Theme.textSecondary)
                 }
             case .migrating(let progress):
                 ProgressView().controlSize(.small)
                 Text("Migrating \(Int(progress * 100))%")
-                    .font(.system(size: 11))
+                    .font(.vfCaption)
                     .foregroundColor(Theme.textSecondary)
             case .indexing(let done, let total):
                 ProgressView().controlSize(.small)
                 Text("Indexing \(done)/\(total)")
-                    .font(.system(size: 11))
+                    .font(.vfCaption)
                     .foregroundColor(Theme.textSecondary)
             case .error(let message):
-                Text("⚠ \(message)")
-                    .font(.system(size: 11))
+                Text(message)
+                    .font(.vfCaption)
                     .foregroundColor(Theme.warning)
                     .lineLimit(1)
                     .help(message)
             }
 
-            Button {
+            VFButton(title: "Sync", icon: "arrow.triangle.2.circlepath", style: .secondary, isCompact: true, isLoading: service.isIndexing) {
                 Task {
                     await service.syncNow()
                     simulation.sync(with: service.graph)
                 }
-            } label: {
-                Label("SYNC", systemImage: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 11, weight: .bold))
             }
-            .buttonStyle(.borderedProminent)
             .disabled(service.isIndexing)
             .help("Update Memory from saved transcriptions")
         }
@@ -207,18 +212,18 @@ struct KnowledgeGraphView: View {
                 .font(.system(size: 40, weight: .light))
                 .foregroundColor(Theme.textSecondary)
             Text(service.isIndexing ? "Building your graph…" : "No graph yet")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.vfBodyMedium)
                 .foregroundColor(Theme.textPrimary)
             Text(service.isIndexing
                  ? "Extracting entities from your transcripts."
-                 : "Click SYNC after dictating to build Memory on demand.")
-                .font(.system(size: 12))
+                 : "Click Sync after dictating to build Memory on demand.")
+                .font(.vfCallout)
                 .foregroundColor(Theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             if case .error(let msg) = service.indexerStatus {
                 Text("Last error: \(msg)")
-                    .font(.system(size: 10))
+                    .font(.vfMicro)
                     .foregroundColor(Theme.warning)
                     .padding(.top, 4)
             }
@@ -250,7 +255,7 @@ struct KnowledgeGraphView: View {
                 // Canvas draws edges + nodes + labels every frame.
                 // `allowsHitTesting(false)` so it never blocks the
                 // per-node drag overlays layered on top.
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { _ in
+                TimelineView(.animation(minimumInterval: Self.graphFrameRate, paused: false)) { _ in
                     Canvas { ctx, _ in
                         simulation.tick(in: size)
                         drawEdges(in: ctx, size: size)
@@ -372,7 +377,7 @@ struct KnowledgeGraphView: View {
     }
 
     private func drawNodes(in ctx: GraphicsContext, size: CGSize) {
-        for body in simulation.bodies {
+        for (index, body) in simulation.bodies.enumerated() {
             let p = displayPoint(body.position, size: size)
             let (r, g, b) = body.colorRGB
             let fill = Color(red: r, green: g, blue: b)
@@ -403,34 +408,42 @@ struct KnowledgeGraphView: View {
                 lineWidth: highlighted ? 1.6 : 1.0
             )
 
-            // Label — ALWAYS shown (v0.5.1). The previous behavior
-            // gated labels behind mentions≥2, which left small graphs
-            // looking like anonymous dots. The label-pill background
-            // gives readability without crowding even when nodes overlap.
-            let labelText = Text(body.label)
-                .font(.system(size: 11, weight: highlighted ? .semibold : .medium))
-                .foregroundColor(Theme.textPrimary)
-            let labelAt = CGPoint(x: p.x, y: p.y + radius + 12)
-            // Pill background — measure first, then draw fill + text.
-            let resolved = ctx.resolve(labelText)
-            let textSize = resolved.measure(in: CGSize(width: 200, height: 40))
-            let padX: CGFloat = 6
-            let padY: CGFloat = 2
-            let pillRect = CGRect(
-                x: labelAt.x - textSize.width / 2 - padX,
-                y: labelAt.y - textSize.height / 2 - padY,
-                width: textSize.width + padX * 2,
-                height: textSize.height + padY * 2
-            )
-            let pillPath = Path(roundedRect: pillRect, cornerRadius: 4)
-            ctx.fill(pillPath, with: .color(Theme.surface.opacity(0.92)))
-            ctx.stroke(
-                pillPath,
-                with: .color(Theme.divider),
-                lineWidth: 0.5
-            )
-            ctx.draw(resolved, at: labelAt, anchor: .center)
+            if shouldDrawLabel(for: body, at: index, highlighted: highlighted) {
+                drawLabel(body.label, highlighted: highlighted, at: p, radius: radius, in: ctx)
+            }
         }
+    }
+
+    private func shouldDrawLabel(for body: ForceSimulation.Body, at index: Int, highlighted: Bool) -> Bool {
+        if highlighted || body.isHovered { return true }
+        if simulation.bodies.count <= Self.fullLabelNodeThreshold { return true }
+        if zoom <= 0.75 { return index < 18 }
+        return index < Self.crowdedLabelLimit
+    }
+
+    private func drawLabel(_ label: String, highlighted: Bool, at point: CGPoint, radius: CGFloat, in ctx: GraphicsContext) {
+        let labelText = Text(label)
+            .font(.system(size: 11, weight: highlighted ? .semibold : .medium))
+            .foregroundColor(Theme.textPrimary)
+        let labelAt = CGPoint(x: point.x, y: point.y + radius + 12)
+        let resolved = ctx.resolve(labelText)
+        let textSize = resolved.measure(in: CGSize(width: 200, height: 40))
+        let padX: CGFloat = 6
+        let padY: CGFloat = 2
+        let pillRect = CGRect(
+            x: labelAt.x - textSize.width / 2 - padX,
+            y: labelAt.y - textSize.height / 2 - padY,
+            width: textSize.width + padX * 2,
+            height: textSize.height + padY * 2
+        )
+        let pillPath = Path(roundedRect: pillRect, cornerRadius: 4)
+        ctx.fill(pillPath, with: .color(Theme.surface.opacity(0.92)))
+        ctx.stroke(
+            pillPath,
+            with: .color(Theme.divider),
+            lineWidth: 0.5
+        )
+        ctx.draw(resolved, at: labelAt, anchor: .center)
     }
 
     private func isRunHighlighted(_ runIDs: [String]) -> Bool {
@@ -450,10 +463,10 @@ struct KnowledgeGraphView: View {
             // Header
             VStack(alignment: .leading, spacing: 4) {
                 Text("Ask Memory")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.vfBodyMedium)
                     .foregroundColor(Theme.textPrimary)
                 Text("Questions about your past transcriptions.")
-                    .font(.system(size: 11))
+                    .font(.vfCaption)
                     .foregroundColor(Theme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -504,19 +517,11 @@ struct KnowledgeGraphView: View {
 
             // Input
             HStack(spacing: 8) {
-                TextField("Ask anything about what you've dictated…", text: $chatInput)
+                TextField("Ask anything about what you've dictated…",
+                          text: $chatInput)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Theme.surfaceElevated)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .strokeBorder(Theme.divider, lineWidth: 1)
-                    )
+                    .font(.vfCallout)
+                    .vfInputChrome()
                     .onSubmit { submitChat() }
 
                 Button(action: submitChat) {
@@ -528,10 +533,11 @@ struct KnowledgeGraphView: View {
                             Circle()
                                 .fill(chatInput.trimmingCharacters(in: .whitespaces).isEmpty
                                       ? Theme.textTertiary
-                                      : Theme.accent)
+                                      : Theme.textPrimary)
                         )
                 }
                 .buttonStyle(.plain)
+                .vfClickableCursor()
                 .disabled(chatInput.trimmingCharacters(in: .whitespaces).isEmpty || isAsking)
             }
             .padding(Theme.Space.md)
@@ -574,6 +580,7 @@ struct KnowledgeGraphView: View {
                 )
         }
         .buttonStyle(.plain)
+        .vfClickableCursor()
     }
 
     private func chatBubble(_ turn: KnowledgeChatTurn) -> some View {
@@ -581,10 +588,10 @@ struct KnowledgeGraphView: View {
             if turn.role == .assistant {
                 Image(systemName: "sparkle")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(Theme.accent)
+                    .foregroundColor(Theme.textPrimary)
                     .frame(width: 18, height: 18)
                     .background(
-                        Circle().fill(Theme.accent.opacity(0.12))
+                        Circle().fill(Theme.secondaryButtonFill)
                     )
                     .padding(.top, 2)
             } else {
@@ -605,6 +612,7 @@ struct KnowledgeGraphView: View {
                         }
                     }
                     .buttonStyle(.plain)
+                    .vfClickableCursor()
                     .foregroundColor(Theme.textSecondary)
                     .help("Show transcripts used for this answer")
                     .popover(
@@ -626,7 +634,7 @@ struct KnowledgeGraphView: View {
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(turn.role == .assistant ? Theme.surface : Theme.accent.opacity(0.10))
+                    .fill(turn.role == .assistant ? Theme.surface : Theme.secondaryButtonFill.opacity(0.72))
             )
 
             if turn.role == .user {
@@ -767,11 +775,11 @@ private struct KnowledgeNodeSummaryPopover: View {
             Divider().background(Theme.divider)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Recent transcripts")
+                Text("Recent sources")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(Theme.textSecondary)
                 if summary.sources.isEmpty {
-                    Text("No transcript preview available.")
+                    Text("No source preview available.")
                         .font(.system(size: 12))
                         .foregroundColor(Theme.textTertiary)
                 } else {
@@ -798,13 +806,13 @@ private struct KnowledgeSourcesPopover: View {
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(Theme.textPrimary)
                 Spacer()
-                Text("Transcripts used")
+                Text("Memory sources")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(Theme.textTertiary)
             }
 
             if sources.isEmpty {
-                Text("No source transcripts found for this answer.")
+                Text("No memory sources found for this answer.")
                     .font(.system(size: 12))
                     .foregroundColor(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -832,18 +840,32 @@ private struct KnowledgeSourcePreviewRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
+                Text(source.sourceLabel)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(Theme.textPrimary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Theme.secondaryButtonFill))
                 Text(Self.dateFormatter.string(from: source.createdAt))
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundColor(Theme.textSecondary)
-                if let app = source.appName, !app.isEmpty {
-                    Text(app)
+                if let context = sourceContext, !context.isEmpty {
+                    Text(context)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(Theme.textTertiary)
+                        .lineLimit(1)
                 }
                 Spacer()
                 Text("\(source.wordCount)w")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundColor(Theme.textTertiary)
+            }
+            if let title = source.title, !title.isEmpty {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(Theme.textPrimary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text(source.text)
                 .font(.system(size: 12))
@@ -859,8 +881,12 @@ private struct KnowledgeSourcePreviewRow: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(Theme.divider, lineWidth: 1)
+            .strokeBorder(Theme.divider, lineWidth: 1)
         )
+    }
+
+    private var sourceContext: String? {
+        source.folderDisplayName ?? source.appName ?? source.profile
     }
 
     private static let dateFormatter: DateFormatter = {

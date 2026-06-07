@@ -50,6 +50,15 @@ struct KnowledgeGraph: Equatable {
     /// IDs of runs that have been indexed into MemoryStore. Surfaced
     /// for UI progress copy ("graph reflects 42 of your 50 dictations").
     var indexedRunIDs: Set<String>
+    /// Total entity count in the selected corpus. The graph intentionally
+    /// renders only the most useful slice so the Memory tab remains light.
+    var totalNodeCount: Int = 0
+    var visibleNodeLimit: Int = 0
+    var visibleEdgeLimit: Int = 0
+
+    var isDisplayLimited: Bool {
+        totalNodeCount > nodes.count
+    }
 }
 
 /// Chat turn for the right-pane history. Persistence is session-only;
@@ -78,6 +87,9 @@ struct KnowledgeChatTurn: Identifiable, Equatable {
 struct KnowledgeSourcePreview: Identifiable, Equatable {
     let id: String
     let createdAt: Date
+    let sourceLabel: String
+    let title: String?
+    let folderDisplayName: String?
     let appName: String?
     let profile: String?
     let wordCount: Int
@@ -117,6 +129,8 @@ final class KnowledgeGraphService: ObservableObject {
     private let chat = MemoryChatService.shared
     private let indexer = IndexerService.shared
     private var cancellables = Set<AnyCancellable>()
+    private static let graphNodeLimit = 90
+    private static let graphEdgeLimit = 180
 
     nonisolated private init() {
         // Wire the Combine subscription + initial reload on the main
@@ -158,7 +172,8 @@ final class KnowledgeGraphService: ObservableObject {
     /// Pull the latest graph state from MemoryStore. Cheap (one entity
     /// query + one edge query); safe to call on every view appearance.
     func reload() {
-        let entities = memory.allEntities(limit: 200)
+        let totalNodeCount = memory.entityCount()
+        let entities = memory.allEntities(limit: Self.graphNodeLimit)
         let nodes: [KnowledgeNode] = entities.map { e in
             KnowledgeNode(
                 id: e.id,
@@ -168,11 +183,21 @@ final class KnowledgeGraphService: ObservableObject {
                 runIDs: memory.runIDs(forEntity: e.id)
             )
         }
-        let edges: [KnowledgeEdge] = memory.allEdges().map { e in
+        let edges: [KnowledgeEdge] = memory.edges(
+            forEntityIDs: entities.map(\.id),
+            limit: Self.graphEdgeLimit
+        ).map { e in
             KnowledgeEdge(nodeA: e.a, nodeB: e.b, weight: e.weight)
         }
         let indexed = Set(nodes.flatMap { $0.runIDs })
-        graph = KnowledgeGraph(nodes: nodes, edges: edges, indexedRunIDs: indexed)
+        graph = KnowledgeGraph(
+            nodes: nodes,
+            edges: edges,
+            indexedRunIDs: indexed,
+            totalNodeCount: totalNodeCount,
+            visibleNodeLimit: Self.graphNodeLimit,
+            visibleEdgeLimit: Self.graphEdgeLimit
+        )
     }
 
     /// Run IDs that reference the given entity. Used by the click-to-
@@ -198,6 +223,9 @@ final class KnowledgeGraphService: ObservableObject {
                 return KnowledgeSourcePreview(
                     id: run.id,
                     createdAt: run.createdAt,
+                    sourceLabel: run.sourceDisplayName,
+                    title: run.title,
+                    folderDisplayName: run.folderDisplayName,
                     appName: run.appName,
                     profile: run.profile,
                     wordCount: run.wordCount,
@@ -239,7 +267,10 @@ final class KnowledgeGraphService: ObservableObject {
                 sourceRunIDs: turn.sourceRunIDs
             )
         }
-        let answer = try await chat.ask(question, conversation: memoryConversation)
+        let answer = try await chat.ask(
+            question,
+            conversation: memoryConversation
+        )
         return KnowledgeChatTurn(
             role: .assistant,
             text: answer.text,

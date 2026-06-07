@@ -31,7 +31,7 @@ struct InputMonitoringGuideView: View {
             }
 
             if !permissionService.inputMonitoringState.isGranted {
-                Text("macOS requires Input Monitoring for VoiceFlow to detect the Fn hotkey. If the prompt didn't appear automatically, grant it manually in 3 steps:")
+                Text("macOS requires Input Monitoring for Verba to detect the Fn hotkey. If the prompt didn't appear automatically, grant it manually in 3 steps:")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -47,8 +47,8 @@ struct InputMonitoringGuideView: View {
 
                     step(
                         number: 2,
-                        title: "Click + and choose VoiceFlow from Applications",
-                        action: "Reveal VoiceFlow in Finder",
+                        title: "Click + and choose Verba from Applications",
+                        action: "Reveal Verba in Finder",
                         systemImage: "magnifyingglass"
                     ) {
                         permissionService.revealAppInFinder()
@@ -56,7 +56,7 @@ struct InputMonitoringGuideView: View {
 
                     step(
                         number: 3,
-                        title: "Toggle it ON — VoiceFlow will detect it automatically, no restart needed.",
+                        title: "Toggle it ON — Verba will detect it automatically, no restart needed.",
                         action: nil,
                         systemImage: "checkmark.circle"
                     ) { }
@@ -70,6 +70,7 @@ struct InputMonitoringGuideView: View {
                         Label(hasRequestedOnce ? "Retry Auto-Prompt" : "Try Auto-Prompt First", systemImage: "sparkles")
                     }
                     .buttonStyle(.bordered)
+                    .vfClickableCursor()
 
                     Spacer()
                     Text("Checking permission…")
@@ -116,6 +117,7 @@ struct InputMonitoringGuideView: View {
                         Label(action, systemImage: systemImage)
                     }
                     .buttonStyle(.link)
+                    .vfClickableCursor()
                 }
             }
             Spacer()

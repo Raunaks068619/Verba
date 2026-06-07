@@ -1,12 +1,13 @@
 import SwiftUI
+import AppKit
 
 /// Dashboard for usage stats. Pure view layer — every number is computed
 /// from `RunStore.summaries` on the fly. No background jobs, no caching
 /// layer of its own; the index file is the source of truth.
 ///
-/// **Design language**: old VoiceFlow palette with Wispr-inspired dashboard
-/// grammar: roomy gutters, tab underline, metric cards, readable charts,
-/// and interpretation copy grounded in the user's actual run history.
+/// **Design language**: the app's current product system. Warm surfaces,
+/// compact cards, purple/black-highlighted data, restrained borders, and
+/// interpretation copy grounded in the user's actual run history.
 ///
 /// **Empty state**: shown when there are zero runs in the store. Avoids
 /// the awful "0 runs · 0 words · NaN WPM" first-launch UI.
@@ -20,26 +21,51 @@ struct InsightsView: View {
     @ObservedObject var runStore: RunStore
     @StateObject private var classifier = UserTypeClassifier.shared
     @StateObject private var indexer = IndexerService.shared
-    @State private var selectedTab: InsightTab = .usage
+    @State private var selectedTab: InsightTab
+    @State private var cachedStats = ComputedStats.empty
 
     private enum InsightTab: String, CaseIterable {
         case usage = "Usage"
         case voice = "Voice"
+
+        var title: String {
+            switch self {
+            case .usage: return "Your Usage"
+            case .voice: return "Your Voice"
+            }
+        }
+    }
+
+    init(runStore: RunStore, initialTab: String? = nil) {
+        self.runStore = runStore
+        let resolvedTab = initialTab.flatMap(InsightTab.init(rawValue:)) ?? .usage
+        _selectedTab = State(initialValue: resolvedTab)
     }
 
     private enum Tone {
         static let ink = Theme.textPrimary
         static let muted = Theme.textSecondary
         static let faint = Theme.textTertiary
-        static let accent = Theme.accent
-        static let accentSoft = Color(red: 1.000, green: 0.690, blue: 0.360)
-        static let tile = Theme.surfaceElevated
-        static let inactiveSquare = Theme.textTertiary.opacity(0.18)
+        static let accent = Theme.interactive
+        static let accentSoft = Theme.interactiveSoft
+        static let strongAccent = Theme.textPrimary
+        static let track = Theme.secondaryButtonFill
+    }
+
+    private var tabSelection: Binding<String> {
+        Binding(
+            get: { selectedTab.rawValue },
+            set: { raw in
+                if let tab = InsightTab(rawValue: raw) {
+                    selectedTab = tab
+                }
+            }
+        )
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 34) {
+            VStack(alignment: .leading, spacing: Theme.Space.xl) {
                 header
 
                 if runStore.summaries.isEmpty {
@@ -54,437 +80,181 @@ struct InsightsView: View {
                 }
             }
             .frame(maxWidth: 1180, alignment: .leading)
-            .padding(.horizontal, 56)
-            .padding(.vertical, 44)
+            .padding(.horizontal, Theme.Layout.contentHPad)
+            .padding(.top, Theme.Layout.contentVPad)
+            .padding(.bottom, 48)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .background(Theme.mainContent)
+        .onAppear {
+            refreshStats()
+        }
+        .onReceive(runStore.$summaries) { summaries in
+            cachedStats = ComputedStats.compute(from: summaries)
         }
     }
 
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 36) {
-            Text("Insights")
-                .font(.system(size: 25, weight: .semibold))
-                .foregroundColor(Tone.ink)
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            HStack(alignment: .center, spacing: Theme.Space.sm) {
+                Text("Insights")
+                    .font(.vfPageTitle)
+                    .foregroundColor(Tone.ink)
+                VFBadge(label: "Local", style: .plan)
+                Spacer()
+                VFButton(
+                    title: "Copy summary",
+                    icon: "square.and.arrow.up",
+                    style: .secondary,
+                    isCompact: true,
+                    action: copyInsightsSummary
+                )
+            }
 
             VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 28) {
-                    ForEach(InsightTab.allCases, id: \.self) { tab in
-                        Button {
-                            withAnimation(.easeOut(duration: 0.14)) {
-                                selectedTab = tab
-                            }
-                        } label: {
-                            VStack(spacing: 16) {
-                                Text(tab.rawValue)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundColor(selectedTab == tab ? Tone.ink : Tone.muted)
-                                Rectangle()
-                                    .fill(selectedTab == tab ? Tone.ink : Color.clear)
-                                    .frame(width: 82, height: 2)
-                            }
-                            .fixedSize()
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    Spacer()
-                }
+                VFTabBar(
+                    options: InsightTab.allCases.map { (id: $0.rawValue, label: $0.title) },
+                    selection: tabSelection
+                )
                 Rectangle()
-                    .fill(Theme.dividerStrong.opacity(0.6))
+                    .fill(Theme.divider)
                     .frame(height: 1)
                     .offset(y: -1)
             }
         }
     }
 
+    private func copyInsightsSummary() {
+        let summary = """
+        Verba Insights
+        WPM: \(stats.averageWPM > 0 ? "\(stats.averageWPM)" : "—")
+        Runs: \(stats.totalRuns)
+        Words: \(stats.totalWords.formatted())
+        Current streak: \(stats.currentStreakDays) day\(stats.currentStreakDays == 1 ? "" : "s")
+        Top app: \(stats.topAppName ?? "No app data yet")
+        """
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(summary, forType: .string)
+    }
+
     // MARK: - Usage
 
     private var usageContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
             overviewGrid
-            interpretationStrip
 
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 20) {
-                    todaySnapshotCard.frame(maxWidth: .infinity)
-                    activityRhythmCard.frame(maxWidth: .infinity)
-                }
-
-                VStack(alignment: .leading, spacing: 20) {
-                    todaySnapshotCard
-                    activityRhythmCard
-                }
-            }
-
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 20) {
+                HStack(alignment: .top, spacing: 24) {
                     desktopUsageCard.frame(maxWidth: .infinity)
-                    modeMixCard.frame(maxWidth: .infinity)
+                    streakCard.frame(maxWidth: .infinity)
                 }
 
                 VStack(alignment: .leading, spacing: 20) {
                     desktopUsageCard
-                    modeMixCard
+                    streakCard
                 }
             }
-
-            streakCard
         }
     }
 
     private var overviewGrid: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 16) {
-                overviewMetricCard(
-                    title: "Words captured",
-                    value: stats.totalWords.formatted(),
-                    detail: "\(stats.averageWordsPerRun) words per run avg",
-                    icon: "text.quote",
-                    tone: Tone.accent
-                )
-                overviewMetricCard(
-                    title: "Dictations",
-                    value: "\(stats.totalRuns)",
-                    detail: "\(stats.successRuns) successful",
-                    icon: "waveform",
-                    tone: Theme.accent
-                )
-                overviewMetricCard(
-                    title: "Speech pace",
-                    value: stats.averageWPM > 0 ? "\(stats.averageWPM)" : "—",
-                    detail: "words per minute",
-                    icon: "speedometer",
-                    tone: Tone.accentSoft
-                )
-                overviewMetricCard(
-                    title: "LLM spend",
-                    value: stats.totalSpendUSD > 0 ? String(format: "$%.3f", stats.totalSpendUSD) : "—",
-                    detail: stats.totalSpendUSD > 0 ? "tracked from runs" : "no paid calls tracked",
-                    icon: "dollarsign.circle",
-                    tone: Theme.warning
-                )
-            }
-
-            VStack(alignment: .leading, spacing: 16) {
-                overviewMetricCard(
-                    title: "Words captured",
-                    value: stats.totalWords.formatted(),
-                    detail: "\(stats.averageWordsPerRun) words per run avg",
-                    icon: "text.quote",
-                    tone: Tone.accent
-                )
-                overviewMetricCard(
-                    title: "Dictations",
-                    value: "\(stats.totalRuns)",
-                    detail: "\(stats.successRuns) successful",
-                    icon: "waveform",
-                    tone: Theme.accent
-                )
-                overviewMetricCard(
-                    title: "Speech pace",
-                    value: stats.averageWPM > 0 ? "\(stats.averageWPM)" : "—",
-                    detail: "words per minute",
-                    icon: "speedometer",
-                    tone: Tone.accentSoft
-                )
-                overviewMetricCard(
-                    title: "LLM spend",
-                    value: stats.totalSpendUSD > 0 ? String(format: "$%.3f", stats.totalSpendUSD) : "—",
-                    detail: stats.totalSpendUSD > 0 ? "tracked from runs" : "no paid calls tracked",
-                    icon: "dollarsign.circle",
-                    tone: Theme.warning
-                )
-            }
-        }
-    }
-
-    private func overviewMetricCard(
-        title: String,
-        value: String,
-        detail: String,
-        icon: String,
-        tone: Color
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(tone)
-                    .frame(width: 30, height: 30)
-                    .background(Circle().fill(tone.opacity(0.14)))
-                Spacer()
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(value)
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundColor(Tone.ink)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Text(title.uppercased())
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1.35)
-                    .foregroundColor(Tone.faint)
-                Text(detail)
-                    .font(.system(size: 12))
-                    .foregroundColor(Tone.muted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 154, alignment: .topLeading)
-        .insightCard()
-    }
-
-    private var interpretationStrip: some View {
-        FlowLayout(spacing: 8) {
-            insightPill(icon: "calendar", text: "\(stats.activeDays) active \(stats.activeDays == 1 ? "day" : "days") in your history")
-            insightPill(icon: "app.badge", text: stats.topAppName.map { "Most used app: \($0)" } ?? "App data unlocks after context capture")
-            insightPill(icon: "slider.horizontal.3", text: stats.topProfileLabel.map { "Most used mode: \($0)" } ?? "Mode mix appears after routed runs")
-            insightPill(icon: "flame", text: "Longest streak: \(stats.longestStreakDays) \(stats.longestStreakDays == 1 ? "day" : "days")")
-        }
-        .insightCard(padding: 14)
-    }
-
-    private func insightPill(icon: String, text: String) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Tone.accent)
-            Text(text)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(Tone.ink)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(Capsule().fill(Theme.surfaceElevated))
-        .overlay(Capsule().strokeBorder(Theme.divider, lineWidth: 1))
-    }
-
-    private var todaySnapshotCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Today")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(Tone.ink)
-                Spacer()
-                metricLabel("LIVE SNAPSHOT")
-            }
-
-            HStack(spacing: 12) {
-                compactMetric(label: "Dictations", value: "\(stats.todayRuns)")
-                compactMetric(label: "Words", value: stats.todayWords.formatted())
-                compactMetric(label: "Avg WPM", value: stats.todayAvgWPM > 0 ? "\(stats.todayAvgWPM)" : "—")
-                compactMetric(label: "Top app", value: stats.todayTopApp ?? "—")
-            }
-        }
-        .frame(minHeight: 184, alignment: .top)
-        .insightCard(padding: 22)
-    }
-
-    private var activityRhythmCard: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Recent rhythm")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(Tone.ink)
-                Spacer()
-                metricLabel("LAST 14 DAYS")
-            }
-
-            ActivityBarsView(entries: stats.activitySparkline, accent: Tone.accent, softAccent: Tone.accentSoft)
-                .frame(height: 106)
-        }
-        .frame(minHeight: 184, alignment: .top)
-        .insightCard(padding: 22)
-    }
-
-    private var wpmCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(stats.averageWPM > 0 ? "\(stats.averageWPM)" : "—")
-                .font(.system(size: 29, weight: .semibold))
-                .foregroundColor(Tone.ink)
-                .monospacedDigit()
-            metricLabel("WORDS PER MINUTE")
-
-            Spacer(minLength: 4)
-
-            HalfGaugeView(
-                progress: stats.averageWPM > 0 ? min(1, Double(stats.averageWPM) / 120.0) : 0,
-                accent: Tone.accent,
-                background: Theme.textTertiary.opacity(0.32)
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 168), spacing: Theme.Space.md)],
+            alignment: .leading,
+            spacing: Theme.Space.md
+        ) {
+            statTile(
+                title: "Average pace",
+                value: stats.averageWPM > 0 ? "\(stats.averageWPM)" : "—",
+                detail: "words per minute",
+                icon: "speedometer",
+                emphasis: stats.averageWPM > 0
             )
-            .frame(height: 112)
-            .overlay(alignment: .bottom) {
-                VStack(spacing: 2) {
-                    Text("Avg")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(Tone.faint)
-                    Text(stats.averageWPM > 0 ? "\(stats.averageWPM)" : "—")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(Tone.ink)
-                        .monospacedDigit()
-                }
-                .offset(y: -6)
-            }
+            statTile(
+                title: "Words dictated",
+                value: stats.totalWords.formatted(),
+                detail: "local transcripts",
+                icon: "text.quote",
+                emphasis: stats.totalWords > 0
+            )
+            statTile(
+                title: "Dictations",
+                value: "\(stats.totalRuns)",
+                detail: "\(stats.successRuns) successful",
+                icon: "waveform",
+                emphasis: stats.totalRuns > 0
+            )
+            statTile(
+                title: "Success rate",
+                value: successRateText,
+                detail: "\(stats.failedRuns + stats.noSpeechRuns) need attention",
+                icon: "checkmark.seal",
+                emphasis: stats.successRuns > 0
+            )
+            statTile(
+                title: "Current streak",
+                value: "\(stats.currentStreakDays)d",
+                detail: "longest \(stats.longestStreakDays)d",
+                icon: "flame",
+                emphasis: stats.currentStreakDays > 0
+            )
+            statTile(
+                title: "Top app",
+                value: stats.topAppName ?? "—",
+                detail: stats.topApps.first.map { "\($0.count) runs" } ?? "no app data yet",
+                icon: "square.grid.2x2",
+                emphasis: stats.topAppName != nil
+            )
         }
-        .frame(minHeight: 178, alignment: .top)
-        .insightCard()
-    }
-
-    private var processedCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("\(stats.totalRuns)")
-                .font(.system(size: 29, weight: .semibold))
-                .foregroundColor(Tone.ink)
-                .monospacedDigit()
-            metricLabel("RUNS THROUGH VOICEFLOW")
-
-            Divider().background(Theme.dividerStrong)
-                .padding(.top, 8)
-
-            VStack(alignment: .leading, spacing: 9) {
-                insightFact("\(stats.successRuns) successful dictations", info: true)
-                insightFact("\(stats.failedRuns + stats.noSpeechRuns) need attention", info: true)
-            }
-        }
-        .frame(minHeight: 178, alignment: .top)
-        .insightCard()
-    }
-
-    private var totalWordsCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(stats.totalWords.formatted())
-                .font(.system(size: 29, weight: .semibold))
-                .foregroundColor(Tone.ink)
-                .monospacedDigit()
-            metricLabel("TOTAL WORDS DICTATED")
-
-            Divider().background(Theme.dividerStrong)
-                .padding(.top, 8)
-
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(Tone.ink)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Desktop")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Tone.ink)
-                    Text("\(stats.totalWords.formatted()) words")
-                        .font(.system(size: 14))
-                        .foregroundColor(Tone.ink)
-                }
-                Spacer()
-                Button {
-                    NotificationCenter.default.post(
-                        name: Notification.Name("VoiceFlow.SelectTab"),
-                        object: nil,
-                        userInfo: ["tab": "runLog"]
-                    )
-                } label: {
-                    Text("Open run log")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(Tone.ink)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Theme.surfaceElevated)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(Theme.divider, lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .frame(minHeight: 178, alignment: .top)
-        .insightCard()
     }
 
     private var desktopUsageCard: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
             HStack(alignment: .firstTextBaseline) {
-                Text("App mix")
-                    .font(.system(size: 22, weight: .semibold))
+                Text("App usage")
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(Tone.ink)
                 Spacer()
-                metricLabel("CAPTURED APPS | \(stats.topApps.count)")
+                metricPill("\(stats.topApps.count) apps")
             }
 
             if stats.topApps.isEmpty {
                 hintRow("No app data yet — dictate again with Context Capture on.")
                     .padding(.top, 14)
             } else {
-                VStack(spacing: 12) {
+                VStack(spacing: Theme.Space.md) {
                     ForEach(stats.topApps, id: \.bundleID) { app in
-                        usageBarRow(
-                            icon: app.icon,
-                            percent: app.percent(of: stats.totalRuns),
-                            label: app.name,
-                            count: "\(app.count) runs"
-                        )
+                        appDetailRow(app)
                     }
                 }
             }
         }
-        .frame(minHeight: 288, alignment: .top)
-        .insightCard(padding: 22)
-    }
-
-    private var modeMixCard: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Mode mix")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(Tone.ink)
-                Spacer()
-                metricLabel("TRANSFORM ROUTES")
-            }
-
-            if stats.topProfiles.isEmpty {
-                hintRow("Mode usage appears after context-aware dictations.")
-                    .padding(.top, 14)
-            } else {
-                VStack(spacing: 12) {
-                    ForEach(stats.topProfiles, id: \.profile) { profile in
-                        usageBarRow(
-                            icon: "slider.horizontal.3",
-                            percent: profile.percent(of: stats.totalRuns),
-                            label: profile.label,
-                            count: "\(profile.count) runs"
-                        )
-                    }
-                }
-            }
-        }
-        .frame(minHeight: 288, alignment: .top)
-        .insightCard(padding: 22)
+        .frame(minHeight: 344, alignment: .top)
+        .insightCard(padding: 24)
     }
 
     private var streakCard: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Consistency")
-                    .font(.system(size: 22, weight: .semibold))
+                Text("Dictation rhythm")
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(Tone.ink)
                 Spacer()
-                metricLabel("CURRENT \(stats.currentStreakDays) \(stats.currentStreakDays == 1 ? "DAY" : "DAYS") | BEST \(stats.longestStreakDays)")
+                metricPill("\(stats.currentStreakDays)d current, \(stats.longestStreakDays)d longest")
             }
 
             StreakHeatmapView(weeks: stats.heatmapWeeks, accent: Tone.accent, softAccent: Tone.accentSoft)
         }
-        .frame(minHeight: 286, alignment: .top)
-        .insightCard(padding: 22)
+        .frame(minHeight: 344, alignment: .top)
+        .insightCard(padding: 24)
     }
 
     // MARK: - Voice
 
     private var voiceContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
             userTypeCard
 
             ViewThatFits(in: .horizontal) {
@@ -523,16 +293,13 @@ struct InsightsView: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 8) {
                 Text("Voice profile")
-                    .font(.system(size: 26, weight: .semibold, design: .serif))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(Tone.ink)
                 Spacer()
-                Text("LOCKED")
-                    .font(.system(size: 10, weight: .bold))
-                    .tracking(1.0)
-                    .foregroundColor(Tone.faint)
+                VFBadge(label: "Locked", style: .plan)
             }
 
-            Text("Dictate \(eligibility.requiredRuns) substantive transcriptions with at least \(eligibility.requiredWordsPerRun) words each. VoiceFlow will then summarize your working style from real usage.")
+            Text("Dictate \(eligibility.requiredRuns) substantive transcriptions with at least \(eligibility.requiredWordsPerRun) words each. \(AppBrand.name) will then summarize your working style from real usage.")
                 .font(.system(size: 13))
                 .foregroundColor(Tone.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -572,16 +339,12 @@ struct InsightsView: View {
     private func readyUserTypeCard() -> some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 12) {
-                Image(systemName: "waveform")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.white)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Tone.accent))
+                VFBrandLogo(size: 36, variant: .light, cornerRadius: 9)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Voice profile")
+                    Text("Voice profile not generated yet")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(Tone.ink)
-                    Text("Ready to sync from saved transcriptions.")
+                    Text("Sync from saved transcriptions to classify your working style.")
                         .font(.system(size: 13))
                         .foregroundColor(Tone.muted)
                 }
@@ -652,45 +415,47 @@ struct InsightsView: View {
         .insightCard(padding: 24)
     }
 
+    @ViewBuilder
     private func syncInsightsButton(label: String) -> some View {
-        Button {
-            Task {
-                await indexer.syncNow()
-                await classifier.classify(force: true)
-            }
-        } label: {
-            if label.isEmpty {
+        if label.isEmpty {
+            Button(action: syncInsights) {
                 Image(systemName: classifier.isClassifying || indexer.isWorking ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(Tone.muted)
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Theme.surfaceElevated))
                     .overlay(Circle().strokeBorder(Theme.divider, lineWidth: 1))
-            } else {
-                Label(label, systemImage: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Capsule().fill(Tone.accent))
             }
+            .buttonStyle(.plain)
+            .vfClickableCursor()
+            .disabled(classifier.isClassifying || indexer.isWorking)
+            .help("Sync Memory and re-analyze latest transcripts")
+        } else {
+            VFButton(title: label, icon: "arrow.triangle.2.circlepath", style: .primary, isCompact: true, isLoading: classifier.isClassifying || indexer.isWorking) {
+                syncInsights()
+            }
+            .help("Sync Memory and re-analyze latest transcripts")
         }
-        .buttonStyle(.plain)
-        .disabled(classifier.isClassifying || indexer.isWorking)
-        .help("Sync Memory and re-analyze latest transcripts")
+    }
+
+    private func syncInsights() {
+        Task {
+            await indexer.syncNow()
+            await classifier.classify(force: true)
+        }
     }
 
     private var appBreakdownCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Peak apps")
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(Tone.ink)
             if stats.topApps.isEmpty {
                 hintRow("No app data yet.")
             } else {
                 VStack(spacing: 10) {
                     ForEach(stats.topApps, id: \.bundleID) { app in
-                        compactBreakdownRow(label: app.name, count: app.count, total: stats.totalRuns)
+                        compactAppBreakdownRow(app)
                     }
                 }
             }
@@ -701,7 +466,7 @@ struct InsightsView: View {
     private var profileBreakdownCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Used modes")
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(Tone.ink)
             if stats.topProfiles.isEmpty {
                 hintRow("Profile usage will appear after your first context-aware dictation.")
@@ -740,89 +505,91 @@ struct InsightsView: View {
 
     // MARK: - Building blocks
 
-    private func metricLabel(_ text: String) -> some View {
+    private func metricPill(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .bold))
-            .tracking(1.55)
-            .foregroundColor(Tone.faint)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(Tone.muted)
+            .padding(.horizontal, 9)
+            .frame(height: 26)
+            .background(Capsule(style: .continuous).fill(Theme.secondaryButtonFill))
     }
 
-    private func compactMetric(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(value)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(Tone.ink)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            Text(label.uppercased())
-                .font(.system(size: 9, weight: .bold))
-                .tracking(1.0)
-                .foregroundColor(Tone.faint)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+    private func statTile(
+        title: String,
+        value: String,
+        detail: String,
+        icon: String,
+        emphasis: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(alignment: .center) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(emphasis ? Tone.accent : Tone.faint)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                            .fill(emphasis ? Tone.accentSoft : Theme.secondaryButtonFill)
+                    )
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(value)
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundColor(Tone.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .monospacedDigit()
+                Text(title)
+                    .font(.vfCaption)
+                    .foregroundColor(Tone.muted)
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundColor(Tone.faint)
+                    .lineLimit(1)
+            }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Theme.surfaceElevated)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Theme.divider, lineWidth: 1)
-        )
+        .frame(minHeight: 132, alignment: .topLeading)
+        .insightCard(padding: Theme.Space.lg)
     }
 
-    private func insightFact(_ text: String, info: Bool = false) -> some View {
-        HStack(spacing: 8) {
-            Text(text)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(Tone.ink)
-            Spacer()
-            if info {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 13))
+    private func appDetailRow(_ app: ComputedStats.AppEntry) -> some View {
+        let percent = app.percent(of: stats.totalRuns)
+
+        return HStack(alignment: .center, spacing: Theme.Space.md) {
+            InsightAppIcon(app: app, size: 28)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(app.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Tone.ink)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(app.count)")
+                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .foregroundColor(Tone.muted)
+                }
+
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule(style: .continuous)
+                            .fill(Tone.track)
+                        Capsule(style: .continuous)
+                            .fill(Tone.strongAccent)
+                            .frame(width: max(4, geo.size.width * percent))
+                    }
+                }
+                .frame(height: 7)
+
+                Text("\(app.words.formatted()) words")
+                    .font(.system(size: 11))
                     .foregroundColor(Tone.faint)
             }
         }
-    }
-
-    private func usageBarRow(icon: String, percent: Double, label: String, count: String) -> some View {
-        HStack(spacing: 13) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(Tone.ink)
-                .frame(width: 22)
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(Theme.textTertiary.opacity(0.16))
-                        .frame(height: 28)
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(percent > 0.45 ? Tone.accent : Tone.accentSoft)
-                        .frame(width: max(46, geo.size.width * percent), height: 28)
-                    Text("\(Int((percent * 100).rounded()))%")
-                        .font(.system(size: 13, weight: .bold).monospacedDigit())
-                        .foregroundColor(.white)
-                        .padding(.leading, 12)
-                }
-            }
-            .frame(height: 28)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(label)
-                    .font(.system(size: 12, weight: .bold))
-                    .tracking(1.0)
-                    .foregroundColor(Tone.ink)
-                    .lineLimit(1)
-                Text(count)
-                    .font(.system(size: 11))
-                    .foregroundColor(Tone.muted)
-            }
-            .frame(width: 126, alignment: .leading)
-        }
+        .padding(.vertical, 2)
     }
 
     private func compactBreakdownRow(label: String, count: Int, total: Int) -> some View {
@@ -836,10 +603,10 @@ struct InsightsView: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Theme.textTertiary.opacity(0.16))
+                        .fill(Tone.track)
                         .frame(height: 8)
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Tone.accent)
+                        .fill(Tone.strongAccent)
                         .frame(width: max(3, geo.size.width * percent), height: 8)
                 }
             }
@@ -851,14 +618,41 @@ struct InsightsView: View {
         }
     }
 
+    private func compactAppBreakdownRow(_ app: ComputedStats.AppEntry) -> some View {
+        let percent = stats.totalRuns > 0 ? Double(app.count) / Double(stats.totalRuns) : 0
+        return HStack(spacing: 10) {
+            InsightAppIcon(app: app, size: 18)
+            Text(app.name)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Tone.ink)
+                .frame(width: 134, alignment: .leading)
+                .lineLimit(1)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Tone.track)
+                        .frame(height: 8)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Tone.strongAccent)
+                        .frame(width: max(3, geo.size.width * percent), height: 8)
+                }
+            }
+            .frame(height: 8)
+            Text("\(app.count)")
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundColor(Tone.muted)
+                .frame(width: 30, alignment: .trailing)
+        }
+    }
+
     private func progressBar(_ progress: Double) -> some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Theme.textTertiary.opacity(0.18))
+                    .fill(Tone.track)
                     .frame(height: 8)
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Tone.accent)
+                    .fill(Tone.strongAccent)
                     .frame(width: max(2, geo.size.width * progress), height: 8)
             }
         }
@@ -889,83 +683,21 @@ struct InsightsView: View {
     }
 
     private var stats: ComputedStats {
-        ComputedStats.compute(from: runStore.summaries)
+        cachedStats
+    }
+
+    private var successRateText: String {
+        guard stats.totalRuns > 0 else { return "—" }
+        let rate = Double(stats.successRuns) / Double(stats.totalRuns)
+        return "\(Int((rate * 100).rounded()))%"
+    }
+
+    private func refreshStats() {
+        cachedStats = ComputedStats.compute(from: runStore.summaries)
     }
 }
 
 // MARK: - Drawing
-
-private struct HalfGaugeView: View {
-    let progress: Double
-    let accent: Color
-    let background: Color
-
-    var body: some View {
-        ZStack {
-            GaugeArc(progress: 1)
-                .stroke(background, style: StrokeStyle(lineWidth: 15, lineCap: .round))
-            GaugeArc(progress: progress)
-                .stroke(accent, style: StrokeStyle(lineWidth: 15, lineCap: .round))
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 16)
-    }
-}
-
-private struct GaugeArc: Shape {
-    var progress: Double
-
-    var animatableData: Double {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let radius = min(rect.width / 2, rect.height) - 8
-        let center = CGPoint(x: rect.midX, y: rect.maxY - 8)
-        path.addArc(
-            center: center,
-            radius: radius,
-            startAngle: .degrees(180),
-            endAngle: .degrees(180 + 180 * progress),
-            clockwise: false
-        )
-        return path
-    }
-}
-
-private struct ActivityBarsView: View {
-    let entries: [ComputedStats.DayEntry]
-    let accent: Color
-    let softAccent: Color
-
-    private var maxRuns: Int {
-        max(1, entries.map(\.runs).max() ?? 1)
-    }
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 7) {
-            ForEach(entries, id: \.day) { entry in
-                VStack(spacing: 7) {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(entry.runs == 0 ? Theme.textTertiary.opacity(0.16) : barColor(for: entry.runs))
-                        .frame(height: max(8, CGFloat(entry.runs) / CGFloat(maxRuns) * 72))
-                        .frame(maxHeight: 72, alignment: .bottom)
-                        .help("\(entry.runs) dictation\(entry.runs == 1 ? "" : "s") on \(entry.day)")
-                    Text(entry.shortDay)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(Theme.textTertiary)
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-    }
-
-    private func barColor(for runs: Int) -> Color {
-        runs >= maxRuns ? accent : softAccent.opacity(0.78)
-    }
-}
 
 private struct StreakHeatmapView: View {
     let weeks: [[ComputedStats.HeatmapDay]]
@@ -1044,10 +776,10 @@ private struct StreakHeatmapView: View {
 
     private func color(for runs: Int) -> Color {
         switch runs {
-        case 0: return Theme.textTertiary.opacity(0.14)
-        case 1: return softAccent.opacity(0.42)
-        case 2: return softAccent.opacity(0.72)
-        case 3: return accent.opacity(0.76)
+        case 0: return Theme.secondaryButtonFill
+        case 1: return softAccent.opacity(0.46)
+        case 2: return softAccent.opacity(0.78)
+        case 3: return accent.opacity(0.72)
         default: return accent
         }
     }
@@ -1065,7 +797,108 @@ private extension View {
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                     .strokeBorder(Theme.divider, lineWidth: 1)
             )
-            .shadow(color: Theme.Shadow.card.color, radius: Theme.Shadow.card.radius, x: 0, y: Theme.Shadow.card.y)
+    }
+}
+
+private struct InsightAppIcon: View {
+    let bundleID: String
+    let name: String
+    let fallbackSymbol: String
+    var size: CGFloat = 22
+
+    init(app: ComputedStats.AppEntry, size: CGFloat = 22) {
+        self.bundleID = app.bundleID
+        self.name = app.name
+        self.fallbackSymbol = app.icon
+        self.size = size
+    }
+
+    var body: some View {
+        Group {
+            if let icon = InsightAppIconResolver.icon(bundleID: bundleID, appName: name) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+            } else {
+                Image(systemName: fallbackSymbol)
+                    .font(.system(size: size * 0.62, weight: .medium))
+                    .foregroundColor(Theme.textPrimary)
+                    .frame(width: size, height: size)
+                    .background(
+                        RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                            .fill(Theme.surfaceElevated)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                            .strokeBorder(Theme.divider, lineWidth: 1)
+                    )
+            }
+        }
+        .frame(width: size, height: size)
+        .help(name)
+    }
+}
+
+private enum InsightAppIconResolver {
+    static func icon(bundleID: String, appName: String) -> NSImage? {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            return sizedIcon(for: url)
+        }
+
+        for candidate in appNameCandidates(appName) {
+            for root in applicationRoots {
+                let url = root.appendingPathComponent("\(candidate).app")
+                if FileManager.default.fileExists(atPath: url.path),
+                   let icon = sizedIcon(for: url) {
+                    return icon
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private static var applicationRoots: [URL] {
+        [
+            URL(fileURLWithPath: "/Applications"),
+            URL(fileURLWithPath: "/System/Applications"),
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
+        ]
+    }
+
+    private static func appNameCandidates(_ rawName: String) -> [String] {
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lower = name.lowercased()
+        var candidates = [name]
+
+        if lower == "code" || lower.contains("visual studio") {
+            candidates.append("Visual Studio Code")
+        }
+        if lower.contains("chrome") {
+            candidates.append("Google Chrome")
+        }
+        if lower.contains("claude") {
+            candidates.append("Claude")
+        }
+        if lower.contains("codex") {
+            candidates.append("Codex")
+        }
+        if lower.contains("chatgpt") || lower.contains("chat gpt") {
+            candidates.append("ChatGPT")
+        }
+
+        return candidates.reduce(into: [String]()) { result, candidate in
+            guard !candidate.isEmpty, !result.contains(candidate) else { return }
+            result.append(candidate)
+        }
+    }
+
+    private static func sizedIcon(for url: URL) -> NSImage? {
+        let icon = (NSWorkspace.shared.icon(forFile: url.path).copy() as? NSImage)
+            ?? NSWorkspace.shared.icon(forFile: url.path)
+        icon.size = NSSize(width: 64, height: 64)
+        return icon
     }
 }
 
@@ -1084,23 +917,14 @@ struct ComputedStats {
     let failedRuns: Int
     let noSpeechRuns: Int
     let totalWords: Int
-    let totalSpendUSD: Double
     let averageWPM: Int
-    let averageWordsPerRun: Int
     let currentStreakDays: Int
     let longestStreakDays: Int
-    let activeDays: Int
 
-    let todayRuns: Int
-    let todayWords: Int
-    let todayAvgWPM: Int
-    let todayTopApp: String?
     let topAppName: String?
-    let topProfileLabel: String?
 
     let topApps: [AppEntry]
     let topProfiles: [ProfileEntry]
-    let activitySparkline: [DayEntry]
     let heatmapWeeks: [[HeatmapDay]]
 
     struct AppEntry {
@@ -1135,8 +959,11 @@ struct ComputedStats {
             return Double(count) / Double(total)
         }
     }
-    struct DayEntry { let day: String; let shortDay: String; let runs: Int }
     struct HeatmapDay { let date: Date; let label: String; let runs: Int }
+
+    static var empty: ComputedStats {
+        compute(from: [])
+    }
 
     /// Fallback word count for summaries persisted before `wordCount`
     /// was added. Tokenizes on whitespace — same approach as RunStore.save.
@@ -1158,8 +985,6 @@ struct ComputedStats {
         let failedRuns = summaries.filter { $0.status == .failed }.count
         let noSpeechRuns = summaries.filter { $0.status == .noSpeech }.count
         let totalWords = summaries.reduce(0) { $0 + wordCount(of: $1) }
-        let totalSpend = summaries.reduce(0.0) { $0 + ($1.llmCostUSD ?? 0) }
-        let averageWordsPerRun = totalRuns > 0 ? Int((Double(totalWords) / Double(totalRuns)).rounded()) : 0
 
         let perRunWPMs = summaries.compactMap { run -> Double? in
             let wc = wordCount(of: run)
@@ -1172,7 +997,6 @@ struct ComputedStats {
 
         let runsByDay = Dictionary(grouping: summaries) { calendar.startOfDay(for: $0.createdAt) }
         let runDays = Set(runsByDay.keys)
-        let activeDays = runDays.count
         var currentStreak = 0
         var cursor = startOfToday
         while runDays.contains(cursor) {
@@ -1180,24 +1004,7 @@ struct ComputedStats {
             cursor = calendar.date(byAdding: .day, value: -1, to: cursor)!
         }
 
-        let todayRuns = summaries.filter { calendar.isDateInToday($0.createdAt) }
-        let todayWords = todayRuns.reduce(0) { $0 + wordCount(of: $1) }
-        let todayWPMs = todayRuns.compactMap { run -> Double? in
-            let wc = wordCount(of: run)
-            guard run.durationSeconds > 0, wc > 0 else { return nil }
-            return Double(wc) * 60.0 / run.durationSeconds
-        }
-        let todayAvgWPM = todayWPMs.isEmpty
-            ? 0
-            : Int((todayWPMs.reduce(0, +) / Double(todayWPMs.count)).rounded())
-        let todayTopApp = Dictionary(grouping: todayRuns) { $0.frontmostAppName ?? "" }
-            .filter { !$0.key.isEmpty }
-            .mapValues { $0.count }
-            .max { $0.value < $1.value }?
-            .key
-
         let longestStreak = longestStreakLength(in: runDays, calendar: calendar)
-        let activitySparkline = makeActivitySparkline(from: summaries, startOfToday: startOfToday, calendar: calendar)
         let heatmapWeeks = makeHeatmapWeeks(from: runsByDay, startOfToday: startOfToday, calendar: calendar)
 
         let appBuckets = Dictionary(grouping: summaries.filter { $0.frontmostBundleID != nil }) {
@@ -1231,45 +1038,14 @@ struct ComputedStats {
             failedRuns: failedRuns,
             noSpeechRuns: noSpeechRuns,
             totalWords: totalWords,
-            totalSpendUSD: totalSpend,
             averageWPM: averageWPM,
-            averageWordsPerRun: averageWordsPerRun,
             currentStreakDays: currentStreak,
             longestStreakDays: longestStreak,
-            activeDays: activeDays,
-            todayRuns: todayRuns.count,
-            todayWords: todayWords,
-            todayAvgWPM: todayAvgWPM,
-            todayTopApp: todayTopApp,
             topAppName: topApps.first?.name,
-            topProfileLabel: topProfiles.first?.label,
             topApps: Array(topApps),
             topProfiles: Array(topProfiles),
-            activitySparkline: activitySparkline,
             heatmapWeeks: heatmapWeeks
         )
-    }
-
-    private static func makeActivitySparkline(
-        from summaries: [RunSummary],
-        startOfToday: Date,
-        calendar: Calendar
-    ) -> [DayEntry] {
-        let fullFormatter = DateFormatter()
-        fullFormatter.dateStyle = .medium
-        let shortFormatter = DateFormatter()
-        shortFormatter.dateFormat = "EE"
-
-        return (0..<14).reversed().map { offset in
-            let day = calendar.date(byAdding: .day, value: -offset, to: startOfToday)!
-            let next = calendar.date(byAdding: .day, value: 1, to: day)!
-            let count = summaries.filter { $0.createdAt >= day && $0.createdAt < next }.count
-            return DayEntry(
-                day: fullFormatter.string(from: day),
-                shortDay: shortFormatter.string(from: day),
-                runs: count
-            )
-        }
     }
 
     private static func longestStreakLength(in days: Set<Date>, calendar: Calendar) -> Int {

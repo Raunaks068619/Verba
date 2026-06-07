@@ -138,14 +138,14 @@ brew install --cask raunaks068619/verba/verba
 ### Manual DMG install
 
 1. Download the latest DMG from [Releases](https://github.com/Raunaks068619/Verba/releases/latest).
-2. Drag `VoiceFlow.app` to `/Applications`.
+2. Drag `Verba.app` to `/Applications`.
 3. Right-click → Open on first launch.
 4. If macOS blocks the unsigned build, run:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/VoiceFlow.app
-codesign --force --deep --sign - /Applications/VoiceFlow.app
-open /Applications/VoiceFlow.app
+xattr -dr com.apple.quarantine /Applications/Verba.app
+codesign --force --deep --sign - /Applications/Verba.app
+open /Applications/Verba.app
 ```
 
 ### Run from source
@@ -248,7 +248,7 @@ Use the release script when you have Apple Developer ID credentials:
 ```bash
 scripts/release_dmg.sh \
   --version v1.0.0 \
-  --app-path dist/VoiceFlow.app \
+  --app-path dist/Verba.app \
   --bundle-id com.voiceflow.app
 ```
 

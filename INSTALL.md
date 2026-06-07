@@ -8,8 +8,8 @@ Verba is distributed as a `.dmg`. There are two install paths depending on wheth
 
 This requires an Apple Developer Program membership ($99/yr). The user experience is seamless:
 
-1. Double-click `VoiceFlow-vX.Y.Z.dmg`
-2. Drag `VoiceFlow.app` to `/Applications`
+1. Double-click `Verba-vX.Y.Z.dmg`
+2. Drag `Verba.app` to `/Applications`
 3. Launch from `/Applications` → accept permission prompts
 4. Done.
 
@@ -29,11 +29,11 @@ This is Gatekeeper quarantine + hardened runtime blocking access — it has noth
 
 ### The one-shot fix (run once after installing)
 
-After dragging `VoiceFlow.app` to `/Applications`, open **Terminal** and run:
+After dragging `Verba.app` to `/Applications`, open **Terminal** and run:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/VoiceFlow.app
-codesign --force --deep --sign - /Applications/VoiceFlow.app
+xattr -dr com.apple.quarantine /Applications/Verba.app
+codesign --force --deep --sign - /Applications/Verba.app
 ```
 
 What this does:
@@ -46,7 +46,7 @@ What this does:
 Then launch it:
 
 ```bash
-open /Applications/VoiceFlow.app
+open /Applications/Verba.app
 ```
 
 ### First-run permission flow

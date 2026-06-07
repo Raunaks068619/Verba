@@ -5,10 +5,10 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/release_dmg_unsigned.sh --version <vX.Y.Z> [--app-path <path/to/VoiceFlow.app>]
+  scripts/release_dmg_unsigned.sh --version <vX.Y.Z> [--app-path <path/to/Verba.app>]
 
 If --app-path is not provided, the script builds Release from Xcode and uses:
-  build/DerivedData/Build/Products/Release/VoiceFlow.app
+  build/DerivedData/Build/Products/Release/Verba.app
 
 Optional environment:
   XCODE_PROJECT (default: VoiceFlow.xcodeproj)
@@ -20,6 +20,8 @@ VERSION=""
 APP_PATH=""
 PROJECT="${XCODE_PROJECT:-VoiceFlow.xcodeproj}"
 SCHEME="${XCODE_SCHEME:-VoiceFlow}"
+APP_NAME="${APP_NAME:-Verba}"
+APP_BUNDLE_NAME="${APP_BUNDLE_NAME:-${APP_NAME}.app}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -53,8 +55,8 @@ DIST_DIR="dist"
 BUILD_DIR="build"
 DERIVED_DATA="${BUILD_DIR}/DerivedData"
 STAGE_DIR="${BUILD_DIR}/dmg-stage"
-PRODUCT_APP="${DERIVED_DATA}/Build/Products/Release/VoiceFlow.app"
-DMG_PATH="${DIST_DIR}/VoiceFlow-${VERSION}-unsigned.dmg"
+PRODUCT_APP="${DERIVED_DATA}/Build/Products/Release/${APP_BUNDLE_NAME}"
+DMG_PATH="${DIST_DIR}/${APP_NAME}-${VERSION}-unsigned.dmg"
 
 mkdir -p "${DIST_DIR}" "${BUILD_DIR}"
 rm -rf "${STAGE_DIR}" "${DMG_PATH}"
@@ -77,11 +79,11 @@ fi
 
 echo "==> Creating DMG staging directory"
 mkdir -p "${STAGE_DIR}"
-cp -R "${APP_PATH}" "${STAGE_DIR}/VoiceFlow.app"
+cp -R "${APP_PATH}" "${STAGE_DIR}/${APP_BUNDLE_NAME}"
 ln -s /Applications "${STAGE_DIR}/Applications"
 
 # Ship the first-run helper inside the DMG so the friend can double-click it
-# after dragging the app to /Applications. Strips quarantine + re-signs locally.
+# after dragging the app to /Applications. Strips quarantine on first launch.
 if [[ -f "scripts/first_run.command" ]]; then
   cp "scripts/first_run.command" "${STAGE_DIR}/First Run (fix permissions).command"
   chmod +x "${STAGE_DIR}/First Run (fix permissions).command"
@@ -91,10 +93,10 @@ fi
 # This matters: DMG contents get quarantined on download, and a machine-local
 # ad-hoc signature at least prevents the "identity changed" TCC invalidation.
 echo "==> Ad-hoc signing app bundle"
-codesign --force --deep --options runtime --entitlements Resources/VoiceFlow.entitlements --sign - "${STAGE_DIR}/VoiceFlow.app"
+codesign --force --deep --options runtime --entitlements Resources/VoiceFlow.entitlements --sign - "${STAGE_DIR}/${APP_BUNDLE_NAME}"
 
 echo "==> Creating unsigned DMG"
-hdiutil create -volname "VoiceFlow" -srcfolder "${STAGE_DIR}" -ov -format UDZO "${DMG_PATH}"
+hdiutil create -volname "${APP_NAME}" -srcfolder "${STAGE_DIR}" -ov -format UDZO "${DMG_PATH}"
 
 echo "==> Writing checksum"
 shasum -a 256 "${DMG_PATH}" > "${DIST_DIR}/checksums.txt"

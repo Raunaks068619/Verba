@@ -82,7 +82,7 @@ class TextInjector {
             // focused, etc.). Don't paste into our own UI — could clobber
             // a SecureField like an API key.
             if Self.isVoiceFlowForeground() {
-                self.suppressInjection(normalized, reason: "VoiceFlow is frontmost")
+                self.suppressInjection(normalized, reason: "\(AppBrand.name) is frontmost")
                 return
             }
 

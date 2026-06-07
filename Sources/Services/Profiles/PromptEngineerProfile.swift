@@ -1,13 +1,13 @@
 import Foundation
 
 /// "Prompt Engineer" profile — turns a casually-dictated description into
-/// a structured, well-formed LLM prompt the user can paste into ChatGPT,
+/// a readable, well-formed LLM prompt the user can paste into ChatGPT,
 /// Claude, Cursor's chat, etc.
 ///
 /// **Use case**: user is staring at the Cursor chat box. Holds Opt+2,
 /// rambles about what they want — vague intent, half-formed requirements,
 /// jumping between thoughts. Lets go. Pasted into Cursor: a clean prompt
-/// with explicit goal, context, constraints, and acceptance criteria.
+/// with clear formatting that is proportional to the request.
 ///
 /// **Triggered two ways**:
 /// 1. Hotkey identifier `.promptEngineer` (Phase 3 dedicated hotkey).
@@ -18,6 +18,7 @@ import Foundation
 final class PromptEngineerProfile: TransformerProfile {
     let kind: ProfileKind = .promptEngineer
     let displayLabel = ProfileKind.promptEngineer.displayLabel
+    static let userDefaultsKey = "prompt_engineer_system_prompt"
 
     private let llm: LLMService
     private let preferredBackend: PolishBackend?
@@ -46,9 +47,16 @@ final class PromptEngineerProfile: TransformerProfile {
             return
         }
 
+        let systemPrompt = """
+        \(Self.systemPrompt)
+
+        Language output:
+        \(Self.languageInstruction(for: input.style))
+        """
+
         let request = LLMRequest(
             messages: [
-                LLMMessage(role: .system, content: Self.systemPrompt),
+                LLMMessage(role: .system, content: systemPrompt),
                 LLMMessage(role: .user, content: Self.buildUserMessage(request: stripped, context: input.context))
             ],
             backendOverride: preferredBackend,
@@ -85,7 +93,40 @@ final class PromptEngineerProfile: TransformerProfile {
         }
     }
 
-    static let systemPrompt: String = """
+    static var systemPrompt: String {
+        let stored = (UserDefaults.standard.string(forKey: userDefaultsKey) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let legacyStoredPrompt = legacyDefaultSystemPrompt
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return stored.isEmpty || stored == legacyStoredPrompt ? defaultSystemPrompt : stored
+    }
+
+    static let defaultSystemPrompt: String = """
+    You are Prompt Engineer inside a macOS dictation app.
+    The user dictated a rough thought, request, bug note, product idea, or instruction for an AI agent. Rewrite it into a clean, readable prompt that preserves the user's intent and vocabulary.
+
+    Output rules:
+    - No preamble, no explanation, no markdown fence.
+    - Return only the improved prompt text.
+    - Preserve the user's domain words, examples, filenames, quoted text, and constraints.
+    - Do not invent requirements, acceptance criteria, tools, or decisions.
+    - Keep the result proportional to the input: short input stays short, broad input gets more structure.
+
+    Formatting behavior:
+    - Use normal readable formatting: short paragraphs, line breaks, bullets, and numbered lists when they make the prompt easier for an AI agent to follow.
+    - If the user gives a list or asks multiple things, keep them as separate bullets or numbered steps.
+    - If the user gives a messy sentence with several clauses, split it into clear sentences.
+    - If the user is asking an AI agent to do implementation work, make the task direct and actionable.
+    - If the user gives follow-up questions, keep them as a small "Follow-up questions" list instead of turning them into a full spec.
+    - Only use sections like Goal, Context, Constraints, Output format, and Acceptance criteria when the user explicitly asks for a spec/PRD/task brief/implementation plan, or when the dictated request is clearly large enough to need those sections.
+
+    Style:
+    - Clear, compact, and agent-readable.
+    - Keep the user's voice where possible.
+    - Avoid robotic spec templates for ordinary notes or quick instructions.
+    """
+
+    private static let legacyDefaultSystemPrompt: String = """
     You are a prompt-engineering assistant inside a macOS dictation app.
     The user dictated a vague, unstructured request describing what they
     want an AI to do. Output a CLEAN, WELL-STRUCTURED PROMPT they can
@@ -112,5 +153,16 @@ final class PromptEngineerProfile: TransformerProfile {
             sections.append(context.selection)
         }
         return sections.joined(separator: "\n")
+    }
+
+    static func languageInstruction(for style: TranscriptOutputStyle) -> String {
+        switch style {
+        case .cleanHinglish:
+            return "Preserve Hindi, Marathi, or other non-English wording, but write it in English letters only. Do not translate meaning into English."
+        case .translateEnglish, .clean:
+            return "Translate the user's dictated request to natural English before writing the final prompt. The final prompt must be English."
+        case .verbatim:
+            return "Preserve the user's language choice. Only clean wording enough to make the final prompt usable."
+        }
     }
 }

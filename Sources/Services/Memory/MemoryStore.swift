@@ -1,25 +1,12 @@
 import Foundation
 import SQLite3
 
-/// Searchable, indexed view of the user's transcription history.
+/// Searchable, indexed view of VoiceFlow dictations and optional local
+/// AI-agent sessions.
 ///
-/// **Why a separate store from RunStore**: RunStore is the system of record
-/// — one JSON file per run on disk, durable, easy to debug. MemoryStore is
-/// a *derived* index built for query speed: full-text search via FTS5,
-/// semantic search via cosine similarity over precomputed embeddings, and
-/// entity-level relationships for the knowledge graph. If MemoryStore ever
-/// corrupts, delete `memory.db`; `IndexerService` rebuilds from RunStore.
-///
-/// **Concurrency model**: every public method routes through `queue`, a
-/// serial dispatch queue. SQLite is opened with `SQLITE_OPEN_FULLMUTEX` as
-/// belt-and-suspenders but the queue is what actually keeps callers honest.
-/// Reads + writes from any thread are safe.
-///
-/// **Why raw C API and not SQLite.swift / GRDB**: zero SwiftPM dependency.
-/// The wrapper is ~500 lines for a schema this size, which is cheap. We
-/// pay it once; we save the dep resolver, the SwiftPM cache, and the
-/// surface area of a third-party library that loves to introduce its own
-/// thread model.
+/// MemoryStore is a derived index. VoiceFlow runs remain durable in
+/// RunStore; Claude/Codex/Gemini sessions remain in their own local stores.
+/// If this SQLite database is deleted or migrated, Sync rebuilds it.
 final class MemoryStore {
     static let shared = MemoryStore()
 
@@ -27,11 +14,7 @@ final class MemoryStore {
     private var db: OpaquePointer?
     private(set) var isOpen: Bool = false
 
-    /// Bumped whenever the schema changes in a way that requires migration.
-    /// Stored in the `schema_version` table; on app launch we compare and
-    /// either run incremental migrations or wipe + rebuild (the index is
-    /// derived, never user-authored, so destruction is safe).
-    private static let currentSchemaVersion: Int = 1
+    private static let currentSchemaVersion: Int = 2
 
     private init() {
         open()
@@ -66,29 +49,17 @@ final class MemoryStore {
         db = handle
         isOpen = true
 
-        // Pragma tuning. WAL mode lets readers and writers run concurrently
-        // without blocking each other — important when the indexer is busy
-        // writing while the chat UI queries.
         exec("PRAGMA journal_mode=WAL;")
-        exec("PRAGMA synchronous=NORMAL;")    // WAL durability is preserved
+        exec("PRAGMA synchronous=NORMAL;")
         exec("PRAGMA temp_store=MEMORY;")
         exec("PRAGMA foreign_keys=ON;")
 
         ensureSchema()
     }
 
-    /// Nuke + recreate. Called from migration path when the schema version
-    /// is incompatible (forward-incompatible breaking change). Safe because
-    /// MemoryStore is derived from RunStore — IndexerService will rebuild.
     func resetSchema() {
         queue.sync {
-            exec("DROP TABLE IF EXISTS embeddings;")
-            exec("DROP TABLE IF EXISTS entity_runs;")
-            exec("DROP TABLE IF EXISTS entity_indexed_runs;")
-            exec("DROP TABLE IF EXISTS entities;")
-            exec("DROP TABLE IF EXISTS transcripts_fts;")
-            exec("DROP TABLE IF EXISTS runs;")
-            exec("DROP TABLE IF EXISTS schema_version;")
+            dropKnownTables()
             ensureSchemaInternal()
         }
     }
@@ -108,41 +79,41 @@ final class MemoryStore {
 
         let currentVersion = readSchemaVersion()
         if currentVersion > 0 && currentVersion != Self.currentSchemaVersion {
-            // Forward-incompatible — wipe and rebuild. IndexerService picks
-            // it up from RunStore on next launch.
-            print("MemoryStore: schema v\(currentVersion) → v\(Self.currentSchemaVersion), wiping")
-            exec("DROP TABLE IF EXISTS embeddings;")
-            exec("DROP TABLE IF EXISTS entity_runs;")
-            exec("DROP TABLE IF EXISTS entity_indexed_runs;")
-            exec("DROP TABLE IF EXISTS entities;")
-            exec("DROP TABLE IF EXISTS transcripts_fts;")
-            exec("DROP TABLE IF EXISTS runs;")
+            print("MemoryStore: schema v\(currentVersion) -> v\(Self.currentSchemaVersion), wiping")
+            dropKnownTables(keepSchemaVersion: true)
             exec("DELETE FROM schema_version;")
         }
 
         exec("""
-            CREATE TABLE IF NOT EXISTS runs (
+            CREATE TABLE IF NOT EXISTS memory_items (
                 id TEXT PRIMARY KEY,
+                source_type TEXT NOT NULL,
+                source_app TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                folder_path TEXT,
+                folder_display_name TEXT,
+                title TEXT,
                 created_at INTEGER NOT NULL,
+                updated_at INTEGER,
                 app TEXT,
                 bundle_id TEXT,
                 profile TEXT,
                 word_count INTEGER DEFAULT 0,
                 duration_seconds REAL DEFAULT 0,
                 status TEXT,
-                llm_cost_usd REAL DEFAULT 0
+                model TEXT,
+                tool_names_json TEXT DEFAULT '[]',
+                llm_cost_usd REAL DEFAULT 0,
+                UNIQUE(source_app, external_id)
             );
         """)
-        exec("CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at DESC);")
+        exec("CREATE INDEX IF NOT EXISTS idx_memory_items_created_at ON memory_items(created_at DESC);")
+        exec("CREATE INDEX IF NOT EXISTS idx_memory_items_source_type ON memory_items(source_type);")
+        exec("CREATE INDEX IF NOT EXISTS idx_memory_items_folder ON memory_items(folder_path);")
 
-        // FTS5 virtual table. `porter` stemmer + `unicode61` tokenizer is
-        // the standard "good defaults" combo — case-insensitive, handles
-        // accents, and "running" matches "run". Content lives in this table
-        // (no separate content-shadowing) so we don't have to keep the FTS
-        // index manually in sync.
         exec("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS transcripts_fts USING fts5(
-                run_id UNINDEXED,
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_text_fts USING fts5(
+                item_id UNINDEXED,
                 text,
                 tokenize='porter unicode61'
             );
@@ -158,37 +129,48 @@ final class MemoryStore {
         """)
 
         exec("""
-            CREATE TABLE IF NOT EXISTS entity_runs (
+            CREATE TABLE IF NOT EXISTS entity_items (
                 entity_id TEXT NOT NULL,
-                run_id TEXT NOT NULL,
-                PRIMARY KEY (entity_id, run_id)
+                item_id TEXT NOT NULL,
+                PRIMARY KEY (entity_id, item_id)
             );
         """)
-        exec("CREATE INDEX IF NOT EXISTS idx_entity_runs_run ON entity_runs(run_id);")
-        exec("CREATE INDEX IF NOT EXISTS idx_entity_runs_entity ON entity_runs(entity_id);")
+        exec("CREATE INDEX IF NOT EXISTS idx_entity_items_item ON entity_items(item_id);")
+        exec("CREATE INDEX IF NOT EXISTS idx_entity_items_entity ON entity_items(entity_id);")
 
-        // Entity extraction can legitimately return zero entities for short
-        // dictations. Track completion separately from links so those runs
-        // do not retry LLM extraction on every manual sync.
         exec("""
-            CREATE TABLE IF NOT EXISTS entity_indexed_runs (
-                run_id TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS entity_indexed_items (
+                item_id TEXT PRIMARY KEY,
                 indexed_at INTEGER NOT NULL
             );
         """)
 
         exec("""
             CREATE TABLE IF NOT EXISTS embeddings (
-                run_id TEXT PRIMARY KEY,
+                item_id TEXT PRIMARY KEY,
                 vec BLOB NOT NULL,
                 dim INTEGER NOT NULL,
                 model TEXT NOT NULL
             );
         """)
 
-        // Persist current schema version. INSERT OR REPLACE collapses the
-        // table to a single row.
         exec("INSERT OR REPLACE INTO schema_version (version) VALUES (\(Self.currentSchemaVersion));")
+    }
+
+    private func dropKnownTables(keepSchemaVersion: Bool = false) {
+        exec("DROP TABLE IF EXISTS embeddings;")
+        exec("DROP TABLE IF EXISTS entity_runs;")
+        exec("DROP TABLE IF EXISTS entity_indexed_runs;")
+        exec("DROP TABLE IF EXISTS entity_items;")
+        exec("DROP TABLE IF EXISTS entity_indexed_items;")
+        exec("DROP TABLE IF EXISTS entities;")
+        exec("DROP TABLE IF EXISTS transcripts_fts;")
+        exec("DROP TABLE IF EXISTS memory_text_fts;")
+        exec("DROP TABLE IF EXISTS runs;")
+        exec("DROP TABLE IF EXISTS memory_items;")
+        if !keepSchemaVersion {
+            exec("DROP TABLE IF EXISTS schema_version;")
+        }
     }
 
     private func readSchemaVersion() -> Int {
@@ -205,18 +187,39 @@ final class MemoryStore {
 
     // MARK: - Stored types
 
-    /// Lightweight projection of a run row for retrieval purposes. Carries
-    /// just enough to filter, rank, and render a source chip — full
-    /// transcript text is fetched separately when actually needed.
     struct StoredRun: Equatable {
         let id: String
+        let sourceType: String
+        let sourceApp: String
+        let externalID: String
+        let folderPath: String?
+        let folderDisplayName: String?
+        let title: String?
         let createdAt: Date
+        let updatedAt: Date?
         let appName: String?
         let bundleID: String?
         let profile: String?
         let wordCount: Int
         let durationSeconds: Double
         let status: String?
+        let model: String?
+        let toolNames: [String]
+        let llmCostUSD: Double
+
+        var isAgentSession: Bool {
+            sourceType == "agent_session"
+        }
+
+        var sourceDisplayName: String {
+            switch sourceApp {
+            case "voiceflow": return AppBrand.name
+            case AgentSource.claudeCode.rawValue: return AgentSource.claudeCode.displayName
+            case AgentSource.codex.rawValue: return AgentSource.codex.displayName
+            case AgentSource.geminiCLI.rawValue: return AgentSource.geminiCLI.displayName
+            default: return sourceApp
+            }
+        }
     }
 
     struct StoredEntity: Equatable {
@@ -228,8 +231,6 @@ final class MemoryStore {
 
     struct SearchHit: Equatable {
         let runID: String
-        /// FTS5's BM25 score. Lower is better (it's a distance, not a
-        /// similarity) — we negate when combining with cosine.
         let bm25: Double
     }
 
@@ -239,10 +240,26 @@ final class MemoryStore {
         let model: String
     }
 
+    struct SourceCounts: Equatable {
+        let voiceFlow: Int
+        let claudeCode: Int
+        let codex: Int
+        let geminiCLI: Int
+        let unknownProjectGemini: Int
+
+        var agentTotal: Int {
+            claudeCode + codex + geminiCLI
+        }
+    }
+
+    struct FolderReference: Equatable {
+        let runID: String
+        let folderPath: String
+        let folderDisplayName: String
+    }
+
     // MARK: - Write API
 
-    /// Upsert a run row + its transcript text into FTS. Idempotent on the
-    /// run id — re-indexing the same run is safe and cheap.
     func upsertRun(
         id: String,
         createdAt: Date,
@@ -255,85 +272,196 @@ final class MemoryStore {
         llmCostUSD: Double?,
         transcriptText: String
     ) {
-        queue.sync {
-            let createdAtUnix = Int(createdAt.timeIntervalSince1970)
+        upsertMemoryItem(
+            id: id,
+            sourceType: "dictation",
+            sourceApp: "voiceflow",
+            externalID: id,
+            folderPath: nil,
+            folderDisplayName: nil,
+            title: nil,
+            createdAt: createdAt,
+            updatedAt: nil,
+            appName: appName,
+            bundleID: bundleID,
+            profile: profile,
+            wordCount: wordCount,
+            durationSeconds: durationSeconds,
+            status: status,
+            model: nil,
+            toolNames: [],
+            llmCostUSD: llmCostUSD ?? 0,
+            transcriptText: transcriptText
+        )
+    }
 
-            // 1. Upsert run row.
-            let runSQL = """
-                INSERT INTO runs (id, created_at, app, bundle_id, profile, word_count, duration_seconds, status, llm_cost_usd)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    func upsertAgentSession(_ session: AgentSession) {
+        upsertMemoryItem(
+            id: session.memoryItemID,
+            sourceType: "agent_session",
+            sourceApp: session.source.rawValue,
+            externalID: session.externalID,
+            folderPath: session.folderPath,
+            folderDisplayName: session.folderDisplayName,
+            title: session.title,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            appName: nil,
+            bundleID: nil,
+            profile: nil,
+            wordCount: Self.wordCount(in: session.transcriptText),
+            durationSeconds: 0,
+            status: nil,
+            model: session.model,
+            toolNames: session.toolNames,
+            llmCostUSD: 0,
+            transcriptText: session.transcriptText
+        )
+    }
+
+    private func upsertMemoryItem(
+        id: String,
+        sourceType: String,
+        sourceApp: String,
+        externalID: String,
+        folderPath: String?,
+        folderDisplayName: String?,
+        title: String?,
+        createdAt: Date,
+        updatedAt: Date?,
+        appName: String?,
+        bundleID: String?,
+        profile: String?,
+        wordCount: Int,
+        durationSeconds: Double,
+        status: String?,
+        model: String?,
+        toolNames: [String],
+        llmCostUSD: Double,
+        transcriptText: String
+    ) {
+        queue.sync {
+            let previousText = transcriptTextLocked(for: id)
+            let textChanged = previousText != nil && previousText != transcriptText
+            let sql = """
+                INSERT INTO memory_items (
+                    id, source_type, source_app, external_id,
+                    folder_path, folder_display_name, title,
+                    created_at, updated_at,
+                    app, bundle_id, profile,
+                    word_count, duration_seconds, status,
+                    model, tool_names_json, llm_cost_usd
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
+                    source_type=excluded.source_type,
+                    source_app=excluded.source_app,
+                    external_id=excluded.external_id,
+                    folder_path=excluded.folder_path,
+                    folder_display_name=excluded.folder_display_name,
+                    title=excluded.title,
                     created_at=excluded.created_at,
+                    updated_at=excluded.updated_at,
                     app=excluded.app,
                     bundle_id=excluded.bundle_id,
                     profile=excluded.profile,
                     word_count=excluded.word_count,
                     duration_seconds=excluded.duration_seconds,
                     status=excluded.status,
+                    model=excluded.model,
+                    tool_names_json=excluded.tool_names_json,
                     llm_cost_usd=excluded.llm_cost_usd;
             """
-            var runStmt: OpaquePointer?
-            defer { sqlite3_finalize(runStmt) }
-            guard sqlite3_prepare_v2(db, runSQL, -1, &runStmt, nil) == SQLITE_OK else {
-                print("MemoryStore.upsertRun: prepare failed: \(lastError())")
-                return
-            }
-            bindText(runStmt, 1, id)
-            sqlite3_bind_int64(runStmt, 2, Int64(createdAtUnix))
-            bindText(runStmt, 3, appName)
-            bindText(runStmt, 4, bundleID)
-            bindText(runStmt, 5, profile)
-            sqlite3_bind_int(runStmt, 6, Int32(wordCount))
-            sqlite3_bind_double(runStmt, 7, durationSeconds)
-            bindText(runStmt, 8, status)
-            sqlite3_bind_double(runStmt, 9, llmCostUSD ?? 0)
-            if sqlite3_step(runStmt) != SQLITE_DONE {
-                print("MemoryStore.upsertRun: step failed: \(lastError())")
+
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+                print("MemoryStore.upsertMemoryItem: prepare failed: \(lastError())")
                 return
             }
 
-            // 2. Replace FTS entry. FTS5 doesn't have an UPSERT — delete
-            // by run_id and re-insert. Cheap and correct.
-            exec("DELETE FROM transcripts_fts WHERE run_id = '\(escapeForLiteral(id))';")
+            bindText(stmt, 1, id)
+            bindText(stmt, 2, sourceType)
+            bindText(stmt, 3, sourceApp)
+            bindText(stmt, 4, externalID)
+            bindText(stmt, 5, folderPath)
+            bindText(stmt, 6, folderDisplayName)
+            bindText(stmt, 7, title)
+            sqlite3_bind_int64(stmt, 8, Int64(createdAt.timeIntervalSince1970))
+            bindDate(stmt, 9, updatedAt)
+            bindText(stmt, 10, appName)
+            bindText(stmt, 11, bundleID)
+            bindText(stmt, 12, profile)
+            sqlite3_bind_int(stmt, 13, Int32(wordCount))
+            sqlite3_bind_double(stmt, 14, durationSeconds)
+            bindText(stmt, 15, status)
+            bindText(stmt, 16, model)
+            bindText(stmt, 17, Self.encodeJSONString(toolNames))
+            sqlite3_bind_double(stmt, 18, llmCostUSD)
+
+            if sqlite3_step(stmt) != SQLITE_DONE {
+                print("MemoryStore.upsertMemoryItem: step failed: \(lastError())")
+                return
+            }
+
+            if textChanged {
+                clearDerivedData(forItemID: id)
+            }
+            exec("DELETE FROM memory_text_fts WHERE item_id = '\(escapeForLiteral(id))';")
 
             var ftsStmt: OpaquePointer?
             defer { sqlite3_finalize(ftsStmt) }
-            let ftsSQL = "INSERT INTO transcripts_fts (run_id, text) VALUES (?, ?);"
+            let ftsSQL = "INSERT INTO memory_text_fts (item_id, text) VALUES (?, ?);"
             guard sqlite3_prepare_v2(db, ftsSQL, -1, &ftsStmt, nil) == SQLITE_OK else {
-                print("MemoryStore.upsertRun: FTS prepare failed: \(lastError())")
+                print("MemoryStore.upsertMemoryItem: FTS prepare failed: \(lastError())")
                 return
             }
             bindText(ftsStmt, 1, id)
             bindText(ftsStmt, 2, transcriptText)
             if sqlite3_step(ftsStmt) != SQLITE_DONE {
-                print("MemoryStore.upsertRun: FTS step failed: \(lastError())")
+                print("MemoryStore.upsertMemoryItem: FTS step failed: \(lastError())")
             }
         }
     }
 
-    /// Delete a run and everything derived from it. Cascades to FTS,
-    /// embeddings, and entity_runs (orphaned entities are NOT removed —
-    /// they might still be referenced by other runs).
     func deleteRun(id: String) {
         queue.sync {
-            exec("DELETE FROM runs WHERE id = '\(escapeForLiteral(id))';")
-            exec("DELETE FROM transcripts_fts WHERE run_id = '\(escapeForLiteral(id))';")
-            exec("DELETE FROM embeddings WHERE run_id = '\(escapeForLiteral(id))';")
-            exec("DELETE FROM entity_runs WHERE run_id = '\(escapeForLiteral(id))';")
-            exec("DELETE FROM entity_indexed_runs WHERE run_id = '\(escapeForLiteral(id))';")
+            deleteItem(id: id)
         }
     }
 
-    /// Replace the entity set associated with a run. Used by IndexerService
-    /// when entity extraction completes for a run. Old links are dropped,
-    /// new ones inserted. Mention counts are recomputed from scratch.
+    /// Remove every imported external AI-agent session from the corpus.
+    /// Memory is scoped to VoiceFlow's own dictations; this clears rows
+    /// that older builds (with the agent-context toggle) may have written.
+    func purgeAgentSessions() {
+        deleteStaleAgentSessions(validItemIDs: [])
+    }
+
+    func deleteStaleAgentSessions(validItemIDs: Set<String>) {
+        queue.sync {
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, "SELECT id FROM memory_items WHERE source_type = 'agent_session';", -1, &stmt, nil) == SQLITE_OK else {
+                return
+            }
+            var staleIDs: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let id = String(cString: sqlite3_column_text(stmt, 0))
+                if !validItemIDs.contains(id) {
+                    staleIDs.append(id)
+                }
+            }
+            for id in staleIDs {
+                deleteItem(id: id)
+            }
+        }
+    }
+
     func setEntities(forRun runID: String, entities: [(id: String, label: String, type: String)]) {
         queue.sync {
-            // 1. Drop existing links.
-            exec("DELETE FROM entity_runs WHERE run_id = '\(escapeForLiteral(runID))';")
-            exec("DELETE FROM entity_indexed_runs WHERE run_id = '\(escapeForLiteral(runID))';")
+            exec("DELETE FROM entity_items WHERE item_id = '\(escapeForLiteral(runID))';")
+            exec("DELETE FROM entity_indexed_items WHERE item_id = '\(escapeForLiteral(runID))';")
 
-            // 2. Upsert entities. mentions counter is recomputed below.
             for entity in entities {
                 let upsertSQL = """
                     INSERT INTO entities (id, label, type, mentions) VALUES (?, ?, ?, 0)
@@ -348,8 +476,7 @@ final class MemoryStore {
                 }
                 sqlite3_finalize(stmt)
 
-                // Link
-                let linkSQL = "INSERT OR IGNORE INTO entity_runs (entity_id, run_id) VALUES (?, ?);"
+                let linkSQL = "INSERT OR IGNORE INTO entity_items (entity_id, item_id) VALUES (?, ?);"
                 var linkStmt: OpaquePointer?
                 if sqlite3_prepare_v2(db, linkSQL, -1, &linkStmt, nil) == SQLITE_OK {
                     bindText(linkStmt, 1, entity.id)
@@ -359,29 +486,19 @@ final class MemoryStore {
                 sqlite3_finalize(linkStmt)
             }
 
-            // 3. Recompute mention counts. Cheap — it's just a window
-            // function over entity_runs. We do it per-write rather than
-            // maintaining a denormalized counter because eventually-
-            // consistent counters drift in the face of dual-write paths.
+            recomputeMentionCounts()
             exec("""
-                UPDATE entities
-                SET mentions = (SELECT COUNT(*) FROM entity_runs WHERE entity_id = entities.id);
-            """)
-            exec("""
-                INSERT OR REPLACE INTO entity_indexed_runs (run_id, indexed_at)
+                INSERT OR REPLACE INTO entity_indexed_items (item_id, indexed_at)
                 VALUES ('\(escapeForLiteral(runID))', \(Int(Date().timeIntervalSince1970)));
             """)
         }
     }
 
-    /// Persist the embedding for a run. `model` is a free-form tag so we
-    /// can detect when the embedding pipeline changed (e.g. NLEmbedding
-    /// → NLContextualEmbedding) and force re-indexing.
     func setEmbedding(runID: String, vec: [Float], model: String) {
         queue.sync {
             let sql = """
-                INSERT INTO embeddings (run_id, vec, dim, model) VALUES (?, ?, ?, ?)
-                ON CONFLICT(run_id) DO UPDATE SET vec=excluded.vec, dim=excluded.dim, model=excluded.model;
+                INSERT INTO embeddings (item_id, vec, dim, model) VALUES (?, ?, ?, ?)
+                ON CONFLICT(item_id) DO UPDATE SET vec=excluded.vec, dim=excluded.dim, model=excluded.model;
             """
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
@@ -392,7 +509,9 @@ final class MemoryStore {
             bindText(stmt, 1, runID)
             vec.withUnsafeBufferPointer { buf in
                 _ = sqlite3_bind_blob(
-                    stmt, 2, buf.baseAddress,
+                    stmt,
+                    2,
+                    buf.baseAddress,
                     Int32(buf.count * MemoryLayout<Float>.size),
                     Self.SQLITE_TRANSIENT
                 )
@@ -407,26 +526,101 @@ final class MemoryStore {
 
     // MARK: - Read API
 
-    func runCount() -> Int {
+    func runCount(includeAgentContext: Bool = false) -> Int {
+        itemCount(includeAgentContext: includeAgentContext)
+    }
+
+    func itemCount(includeAgentContext: Bool) -> Int {
+        queue.sync {
+            let sql = """
+                SELECT COUNT(*) FROM memory_items
+                WHERE (? = 1 OR source_type = 'dictation');
+            """
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+            sqlite3_bind_int(stmt, 1, includeAgentContext ? 1 : 0)
+            return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+        }
+    }
+
+    func agentSessionCount() -> Int {
         queue.sync {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
-            guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM runs;", -1, &stmt, nil) == SQLITE_OK else { return 0 }
+            guard sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM memory_items WHERE source_type = 'agent_session';", -1, &stmt, nil) == SQLITE_OK else {
+                return 0
+            }
             return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+        }
+    }
+
+    func sourceCounts() -> SourceCounts {
+        queue.sync {
+            let counts = countRowsBySource()
+            return SourceCounts(
+                voiceFlow: counts["voiceflow"] ?? 0,
+                claudeCode: counts[AgentSource.claudeCode.rawValue] ?? 0,
+                codex: counts[AgentSource.codex.rawValue] ?? 0,
+                geminiCLI: counts[AgentSource.geminiCLI.rawValue] ?? 0,
+                unknownProjectGemini: unknownProjectGeminiCount()
+            )
+        }
+    }
+
+    func entityCount(includeAgentContext: Bool = false) -> Int {
+        queue.sync {
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            let sql = """
+                SELECT COUNT(*) FROM (
+                    SELECT entities.id
+                    FROM entities
+                    JOIN entity_items ON entity_items.entity_id = entities.id
+                    JOIN memory_items ON memory_items.id = entity_items.item_id
+                    WHERE (? = 1 OR memory_items.source_type = 'dictation')
+                    GROUP BY entities.id
+                );
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+            sqlite3_bind_int(stmt, 1, includeAgentContext ? 1 : 0)
+            return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+        }
+    }
+
+    func folderReferences(includeAgentContext: Bool) -> [FolderReference] {
+        queue.sync {
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            let sql = """
+                SELECT id, folder_path, folder_display_name
+                FROM memory_items
+                WHERE folder_path IS NOT NULL
+                  AND folder_display_name IS NOT NULL
+                  AND (? = 1 OR source_type = 'dictation');
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            sqlite3_bind_int(stmt, 1, includeAgentContext ? 1 : 0)
+
+            var rows: [FolderReference] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard
+                    let pathC = sqlite3_column_text(stmt, 1),
+                    let displayC = sqlite3_column_text(stmt, 2)
+                else { continue }
+                rows.append(FolderReference(
+                    runID: String(cString: sqlite3_column_text(stmt, 0)),
+                    folderPath: String(cString: pathC),
+                    folderDisplayName: String(cString: displayC)
+                ))
+            }
+            return rows
         }
     }
 
     func transcriptText(for runID: String) -> String? {
         queue.sync {
-            var stmt: OpaquePointer?
-            defer { sqlite3_finalize(stmt) }
-            let sql = "SELECT text FROM transcripts_fts WHERE run_id = ? LIMIT 1;"
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
-            bindText(stmt, 1, runID)
-            if sqlite3_step(stmt) == SQLITE_ROW, let cstr = sqlite3_column_text(stmt, 0) {
-                return String(cString: cstr)
-            }
-            return nil
+            transcriptTextLocked(for: runID)
         }
     }
 
@@ -434,10 +628,7 @@ final class MemoryStore {
         queue.sync {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
-            let sql = """
-                SELECT id, created_at, app, bundle_id, profile, word_count, duration_seconds, status
-                FROM runs WHERE id = ?;
-            """
+            let sql = "SELECT \(Self.itemColumnList) FROM memory_items WHERE id = ?;"
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
             bindText(stmt, 1, id)
             guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
@@ -445,13 +636,7 @@ final class MemoryStore {
         }
     }
 
-    /// FTS5 search ordered by BM25 (lower is more relevant). Caller is
-    /// responsible for combining with vec scores and entity boosts.
-    ///
-    /// `query` is passed straight to FTS5's MATCH operator after a light
-    /// sanitization pass — quotes are escaped to avoid syntax errors when
-    /// the user's question contains them.
-    func searchFTS(query: String, limit: Int = 50) -> [SearchHit] {
+    func searchFTS(query: String, limit: Int = 50, includeAgentContext: Bool = false) -> [SearchHit] {
         queue.sync {
             let sanitized = Self.sanitizeFTSQuery(query)
             guard !sanitized.isEmpty else { return [] }
@@ -459,9 +644,11 @@ final class MemoryStore {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
             let sql = """
-                SELECT run_id, bm25(transcripts_fts) AS score
-                FROM transcripts_fts
-                WHERE transcripts_fts MATCH ?
+                SELECT memory_text_fts.item_id, bm25(memory_text_fts) AS score
+                FROM memory_text_fts
+                JOIN memory_items ON memory_items.id = memory_text_fts.item_id
+                WHERE memory_text_fts MATCH ?
+                  AND (? = 1 OR memory_items.source_type = 'dictation')
                 ORDER BY score
                 LIMIT ?;
             """
@@ -470,7 +657,8 @@ final class MemoryStore {
                 return []
             }
             bindText(stmt, 1, sanitized)
-            sqlite3_bind_int(stmt, 2, Int32(limit))
+            sqlite3_bind_int(stmt, 2, includeAgentContext ? 1 : 0)
+            sqlite3_bind_int(stmt, 3, Int32(limit))
 
             var hits: [SearchHit] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -482,18 +670,20 @@ final class MemoryStore {
         }
     }
 
-    func recentRuns(limit: Int = 20) -> [StoredRun] {
+    func recentRuns(limit: Int = 20, includeAgentContext: Bool = false) -> [StoredRun] {
         queue.sync {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
             let sql = """
-                SELECT id, created_at, app, bundle_id, profile, word_count, duration_seconds, status
-                FROM runs
+                SELECT \(Self.itemColumnList)
+                FROM memory_items
+                WHERE (? = 1 OR source_type = 'dictation')
                 ORDER BY created_at DESC
                 LIMIT ?;
             """
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-            sqlite3_bind_int(stmt, 1, Int32(limit))
+            sqlite3_bind_int(stmt, 1, includeAgentContext ? 1 : 0)
+            sqlite3_bind_int(stmt, 2, Int32(limit))
 
             var rows: [StoredRun] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -503,21 +693,20 @@ final class MemoryStore {
         }
     }
 
-    /// IDs of runs that don't have an embedding yet (or whose embedding
-    /// was produced by a stale model). Used by IndexerService to decide
-    /// what to work on.
-    func unindexedRunIDs(currentModel: String) -> [String] {
+    func unindexedRunIDs(currentModel: String, includeAgentContext: Bool = true) -> [String] {
         queue.sync {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
             let sql = """
-                SELECT runs.id FROM runs
-                LEFT JOIN embeddings ON embeddings.run_id = runs.id
-                WHERE embeddings.run_id IS NULL OR embeddings.model != ?
-                ORDER BY runs.created_at DESC;
+                SELECT memory_items.id FROM memory_items
+                LEFT JOIN embeddings ON embeddings.item_id = memory_items.id
+                WHERE (? = 1 OR memory_items.source_type = 'dictation')
+                  AND (embeddings.item_id IS NULL OR embeddings.model != ?)
+                ORDER BY memory_items.created_at DESC;
             """
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-            bindText(stmt, 1, currentModel)
+            sqlite3_bind_int(stmt, 1, includeAgentContext ? 1 : 0)
+            bindText(stmt, 2, currentModel)
 
             var ids: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -527,18 +716,20 @@ final class MemoryStore {
         }
     }
 
-    /// IDs of runs whose entity extraction has not completed yet.
-    func unentityRunIDs() -> [String] {
+    func unentityRunIDs(includeAgentContext: Bool = true) -> [String] {
         queue.sync {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
             let sql = """
-                SELECT runs.id FROM runs
-                LEFT JOIN entity_indexed_runs ON entity_indexed_runs.run_id = runs.id
-                WHERE entity_indexed_runs.run_id IS NULL
-                ORDER BY runs.created_at DESC;
+                SELECT memory_items.id FROM memory_items
+                LEFT JOIN entity_indexed_items ON entity_indexed_items.item_id = memory_items.id
+                WHERE (? = 1 OR memory_items.source_type = 'dictation')
+                  AND entity_indexed_items.item_id IS NULL
+                ORDER BY memory_items.created_at DESC;
             """
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            sqlite3_bind_int(stmt, 1, includeAgentContext ? 1 : 0)
+
             var ids: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 ids.append(String(cString: sqlite3_column_text(stmt, 0)))
@@ -547,16 +738,18 @@ final class MemoryStore {
         }
     }
 
-    /// Load all embeddings. Used for whole-corpus cosine search — we
-    /// hold all vectors in memory and compute cosine in Swift. At 512
-    /// dims and ~10K runs that's ~20MB and ~50ms per search, both
-    /// acceptable. Past that scale we'd want sqlite-vec or HNSW.
-    func allEmbeddings() -> [EmbeddingRow] {
+    func allEmbeddings(includeAgentContext: Bool = false) -> [EmbeddingRow] {
         queue.sync {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
-            let sql = "SELECT run_id, vec, dim, model FROM embeddings;"
+            let sql = """
+                SELECT embeddings.item_id, embeddings.vec, embeddings.dim, embeddings.model
+                FROM embeddings
+                JOIN memory_items ON memory_items.id = embeddings.item_id
+                WHERE (? = 1 OR memory_items.source_type = 'dictation');
+            """
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            sqlite3_bind_int(stmt, 1, includeAgentContext ? 1 : 0)
 
             var rows: [EmbeddingRow] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -574,14 +767,23 @@ final class MemoryStore {
         }
     }
 
-    /// All entities in the graph, ordered by mention count DESC.
-    func allEntities(limit: Int = 200) -> [StoredEntity] {
+    func allEntities(limit: Int = 200, includeAgentContext: Bool = false) -> [StoredEntity] {
         queue.sync {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
-            let sql = "SELECT id, label, type, mentions FROM entities ORDER BY mentions DESC LIMIT ?;"
+            let sql = """
+                SELECT entities.id, entities.label, entities.type, COUNT(entity_items.item_id) AS scoped_mentions
+                FROM entities
+                JOIN entity_items ON entity_items.entity_id = entities.id
+                JOIN memory_items ON memory_items.id = entity_items.item_id
+                WHERE (? = 1 OR memory_items.source_type = 'dictation')
+                GROUP BY entities.id, entities.label, entities.type
+                ORDER BY scoped_mentions DESC
+                LIMIT ?;
+            """
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-            sqlite3_bind_int(stmt, 1, Int32(limit))
+            sqlite3_bind_int(stmt, 1, includeAgentContext ? 1 : 0)
+            sqlite3_bind_int(stmt, 2, Int32(limit))
 
             var rows: [StoredEntity] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -595,26 +797,24 @@ final class MemoryStore {
         }
     }
 
-    /// Co-occurrence edges across all transcripts, returned as
-    /// (entityA, entityB, weight) tuples canonicalized so a < b. Used by
-    /// the force-directed graph for layout.
-    func allEdges() -> [(a: String, b: String, weight: Int)] {
+    func allEdges(includeAgentContext: Bool = false) -> [(a: String, b: String, weight: Int)] {
         queue.sync {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
-            // Self-join entity_runs on run_id to produce pairs in the
-            // same transcript. The min/max enforces canonical order so
-            // we don't double-count. GROUP BY tallies the weight.
             let sql = """
                 SELECT MIN(a.entity_id, b.entity_id) AS x,
                        MAX(a.entity_id, b.entity_id) AS y,
                        COUNT(*) AS weight
-                FROM entity_runs a
-                JOIN entity_runs b
-                  ON a.run_id = b.run_id AND a.entity_id < b.entity_id
+                FROM entity_items a
+                JOIN entity_items b
+                  ON a.item_id = b.item_id AND a.entity_id < b.entity_id
+                JOIN memory_items
+                  ON memory_items.id = a.item_id
+                WHERE (? = 1 OR memory_items.source_type = 'dictation')
                 GROUP BY x, y;
             """
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            sqlite3_bind_int(stmt, 1, includeAgentContext ? 1 : 0)
 
             var rows: [(a: String, b: String, weight: Int)] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -627,19 +827,72 @@ final class MemoryStore {
         }
     }
 
-    /// Run IDs that mention the given entity. Used by the chat retriever's
-    /// entity-boost path AND by the graph's click-to-filter side panel.
-    func runIDs(forEntity entityID: String) -> [String] {
+    func edges(forEntityIDs entityIDs: [String], limit: Int, includeAgentContext: Bool = false) -> [(a: String, b: String, weight: Int)] {
+        guard !entityIDs.isEmpty, limit > 0 else { return [] }
+
+        return queue.sync {
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+
+            let placeholders = Array(repeating: "?", count: entityIDs.count).joined(separator: ",")
+            let sql = """
+                SELECT MIN(a.entity_id, b.entity_id) AS x,
+                       MAX(a.entity_id, b.entity_id) AS y,
+                       COUNT(*) AS weight
+                FROM entity_items a
+                JOIN entity_items b
+                  ON a.item_id = b.item_id AND a.entity_id < b.entity_id
+                JOIN memory_items
+                  ON memory_items.id = a.item_id
+                WHERE (? = 1 OR memory_items.source_type = 'dictation')
+                  AND a.entity_id IN (\(placeholders))
+                  AND b.entity_id IN (\(placeholders))
+                GROUP BY x, y
+                ORDER BY weight DESC
+                LIMIT ?;
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+
+            var bindIndex: Int32 = 1
+            sqlite3_bind_int(stmt, bindIndex, includeAgentContext ? 1 : 0)
+            bindIndex += 1
+            for id in entityIDs {
+                bindText(stmt, bindIndex, id)
+                bindIndex += 1
+            }
+            for id in entityIDs {
+                bindText(stmt, bindIndex, id)
+                bindIndex += 1
+            }
+            sqlite3_bind_int(stmt, bindIndex, Int32(limit))
+
+            var rows: [(a: String, b: String, weight: Int)] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let a = String(cString: sqlite3_column_text(stmt, 0))
+                let b = String(cString: sqlite3_column_text(stmt, 1))
+                let weight = Int(sqlite3_column_int(stmt, 2))
+                rows.append((a, b, weight))
+            }
+            return rows
+        }
+    }
+
+    func runIDs(forEntity entityID: String, includeAgentContext: Bool = false) -> [String] {
         queue.sync {
             var stmt: OpaquePointer?
             defer { sqlite3_finalize(stmt) }
             let sql = """
-                SELECT run_id FROM entity_runs
-                WHERE entity_id = ?
-                ORDER BY rowid;
+                SELECT entity_items.item_id
+                FROM entity_items
+                JOIN memory_items ON memory_items.id = entity_items.item_id
+                WHERE entity_items.entity_id = ?
+                  AND (? = 1 OR memory_items.source_type = 'dictation')
+                ORDER BY memory_items.created_at DESC;
             """
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
             bindText(stmt, 1, entityID)
+            sqlite3_bind_int(stmt, 2, includeAgentContext ? 1 : 0)
+
             var ids: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 ids.append(String(cString: sqlite3_column_text(stmt, 0)))
@@ -648,46 +901,101 @@ final class MemoryStore {
         }
     }
 
-    /// Clear the *derived* tables (embeddings + entities) but keep runs
-    /// and FTS intact. Used by IndexerService when forcing a full
-    /// re-index (e.g. the embedding model changed). The remaining
-    /// tables stay because they're rebuilt from RunStore via the
-    /// dual-write path, not from the indexer.
     func clearDerivedIndex() {
         queue.sync {
             exec("DELETE FROM embeddings;")
-            exec("DELETE FROM entity_runs;")
-            exec("DELETE FROM entity_indexed_runs;")
+            exec("DELETE FROM entity_items;")
+            exec("DELETE FROM entity_indexed_items;")
             exec("DELETE FROM entities;")
         }
     }
 
     // MARK: - Helpers
 
+    private func deleteItem(id: String) {
+        exec("DELETE FROM memory_items WHERE id = '\(escapeForLiteral(id))';")
+        exec("DELETE FROM memory_text_fts WHERE item_id = '\(escapeForLiteral(id))';")
+        clearDerivedData(forItemID: id)
+        recomputeMentionCounts()
+    }
+
+    private func clearDerivedData(forItemID itemID: String) {
+        exec("DELETE FROM embeddings WHERE item_id = '\(escapeForLiteral(itemID))';")
+        exec("DELETE FROM entity_items WHERE item_id = '\(escapeForLiteral(itemID))';")
+        exec("DELETE FROM entity_indexed_items WHERE item_id = '\(escapeForLiteral(itemID))';")
+    }
+
+    private func transcriptTextLocked(for itemID: String) -> String? {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "SELECT text FROM memory_text_fts WHERE item_id = ? LIMIT 1;"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        bindText(stmt, 1, itemID)
+        if sqlite3_step(stmt) == SQLITE_ROW, let cstr = sqlite3_column_text(stmt, 0) {
+            return String(cString: cstr)
+        }
+        return nil
+    }
+
+    private func recomputeMentionCounts() {
+        exec("""
+            UPDATE entities
+            SET mentions = (SELECT COUNT(*) FROM entity_items WHERE entity_id = entities.id);
+        """)
+    }
+
     private func readRunRow(_ stmt: OpaquePointer?) -> StoredRun? {
         guard let stmt else { return nil }
         let id = String(cString: sqlite3_column_text(stmt, 0))
-        let createdAt = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 1)))
-        let app: String? = sqlite3_column_type(stmt, 2) == SQLITE_NULL
-            ? nil : String(cString: sqlite3_column_text(stmt, 2))
-        let bundleID: String? = sqlite3_column_type(stmt, 3) == SQLITE_NULL
-            ? nil : String(cString: sqlite3_column_text(stmt, 3))
-        let profile: String? = sqlite3_column_type(stmt, 4) == SQLITE_NULL
-            ? nil : String(cString: sqlite3_column_text(stmt, 4))
-        let wordCount = Int(sqlite3_column_int(stmt, 5))
-        let durationSeconds = sqlite3_column_double(stmt, 6)
-        let status: String? = sqlite3_column_type(stmt, 7) == SQLITE_NULL
-            ? nil : String(cString: sqlite3_column_text(stmt, 7))
+        let sourceType = String(cString: sqlite3_column_text(stmt, 1))
+        let sourceApp = String(cString: sqlite3_column_text(stmt, 2))
+        let externalID = String(cString: sqlite3_column_text(stmt, 3))
+        let folderPath = optionalString(stmt, 4)
+        let folderDisplayName = optionalString(stmt, 5)
+        let title = optionalString(stmt, 6)
+        let createdAt = Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, 7)))
+        let updatedAt = optionalDate(stmt, 8)
+        let app = optionalString(stmt, 9)
+        let bundleID = optionalString(stmt, 10)
+        let profile = optionalString(stmt, 11)
+        let wordCount = Int(sqlite3_column_int(stmt, 12))
+        let durationSeconds = sqlite3_column_double(stmt, 13)
+        let status = optionalString(stmt, 14)
+        let model = optionalString(stmt, 15)
+        let toolNames = Self.decodeJSONString(optionalString(stmt, 16))
+        let llmCostUSD = sqlite3_column_double(stmt, 17)
+
         return StoredRun(
             id: id,
+            sourceType: sourceType,
+            sourceApp: sourceApp,
+            externalID: externalID,
+            folderPath: folderPath,
+            folderDisplayName: folderDisplayName,
+            title: title,
             createdAt: createdAt,
+            updatedAt: updatedAt,
             appName: app,
             bundleID: bundleID,
             profile: profile,
             wordCount: wordCount,
             durationSeconds: durationSeconds,
-            status: status
+            status: status,
+            model: model,
+            toolNames: toolNames,
+            llmCostUSD: llmCostUSD
         )
+    }
+
+    private func optionalString(_ stmt: OpaquePointer?, _ column: Int32) -> String? {
+        guard let stmt, sqlite3_column_type(stmt, column) != SQLITE_NULL else { return nil }
+        guard let cstr = sqlite3_column_text(stmt, column) else { return nil }
+        return String(cString: cstr)
+    }
+
+    private func optionalDate(_ stmt: OpaquePointer?, _ column: Int32) -> Date? {
+        guard let stmt, sqlite3_column_type(stmt, column) != SQLITE_NULL else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(sqlite3_column_int64(stmt, column)))
     }
 
     private func exec(_ sql: String) {
@@ -704,10 +1012,16 @@ final class MemoryStore {
     private func bindText(_ stmt: OpaquePointer?, _ index: Int32, _ value: String?) {
         guard let stmt else { return }
         if let value {
-            // SQLITE_TRANSIENT tells SQLite to make its own copy of the
-            // string. SQLITE_STATIC would assume the buffer outlives the
-            // statement, which Swift's bridging doesn't guarantee.
             sqlite3_bind_text(stmt, index, value, -1, Self.SQLITE_TRANSIENT)
+        } else {
+            sqlite3_bind_null(stmt, index)
+        }
+    }
+
+    private func bindDate(_ stmt: OpaquePointer?, _ index: Int32, _ value: Date?) {
+        guard let stmt else { return }
+        if let value {
+            sqlite3_bind_int64(stmt, index, Int64(value.timeIntervalSince1970))
         } else {
             sqlite3_bind_null(stmt, index)
         }
@@ -722,11 +1036,23 @@ final class MemoryStore {
         s.replacingOccurrences(of: "'", with: "''")
     }
 
-    /// Strip FTS5 syntax characters so the user's free-form question
-    /// doesn't blow up the parser. We keep alphanumerics + spaces + a few
-    /// safe punctuation marks. Multi-word queries become implicit AND-of-
-    /// prefix-matches, e.g. "kubectl pods" → `kubectl* pods*`, which is
-    /// forgiving enough for conversational input.
+    private static func encodeJSONString(_ values: [String]) -> String {
+        guard
+            let data = try? JSONSerialization.data(withJSONObject: values, options: []),
+            let text = String(data: data, encoding: .utf8)
+        else { return "[]" }
+        return text
+    }
+
+    private static func decodeJSONString(_ raw: String?) -> [String] {
+        guard
+            let raw,
+            let data = raw.data(using: .utf8),
+            let values = try? JSONSerialization.jsonObject(with: data) as? [String]
+        else { return [] }
+        return values
+    }
+
     private static func sanitizeFTSQuery(_ raw: String) -> String {
         let lowered = raw.lowercased()
         let stripped = lowered.unicodeScalars.map { scalar -> Character in
@@ -737,13 +1063,49 @@ final class MemoryStore {
             .map(String.init)
             .filter { $0.count >= 2 }
         guard !tokens.isEmpty else { return "" }
-        // Prefix wildcards: "kuber" matches "kubernetes". Reasonable for
-        // conversational queries where the user might type a partial.
         return tokens.map { "\($0)*" }.joined(separator: " ")
     }
 
-    /// sqlite3_bind_* sentinels — Swift doesn't import the C macros.
-    /// SQLITE_TRANSIENT == -1, SQLITE_STATIC == 0.
+    private func countRowsBySource() -> [String: Int] {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = "SELECT source_app, COUNT(*) FROM memory_items GROUP BY source_app;"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [:] }
+
+        var counts: [String: Int] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            counts[String(cString: sqlite3_column_text(stmt, 0))] = Int(sqlite3_column_int(stmt, 1))
+        }
+        return counts
+    }
+
+    private func unknownProjectGeminiCount() -> Int {
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        let sql = """
+            SELECT COUNT(*) FROM memory_items
+            WHERE source_app = ? AND folder_path IS NULL;
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        bindText(stmt, 1, AgentSource.geminiCLI.rawValue)
+        return sqlite3_step(stmt) == SQLITE_ROW ? Int(sqlite3_column_int(stmt, 0)) : 0
+    }
+
+    private static func wordCount(in text: String) -> Int {
+        text.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .count
+    }
+
+    private static let itemColumnList = """
+        id, source_type, source_app, external_id,
+        folder_path, folder_display_name, title,
+        created_at, updated_at,
+        app, bundle_id, profile,
+        word_count, duration_seconds, status,
+        model, tool_names_json, llm_cost_usd
+    """
+
     private static let SQLITE_STATIC = unsafeBitCast(OpaquePointer(bitPattern: 0), to: sqlite3_destructor_type.self)
     private static let SQLITE_TRANSIENT = unsafeBitCast(OpaquePointer(bitPattern: -1), to: sqlite3_destructor_type.self)
 }

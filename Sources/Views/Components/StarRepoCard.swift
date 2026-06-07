@@ -69,6 +69,7 @@ struct StarRepoCard: View {
                     .font(.system(.caption, design: .monospaced).weight(.medium))
             }
             .buttonStyle(.plain)
+            .vfClickableCursor()
             .foregroundStyle(.blue)
 
             Spacer()
@@ -116,7 +117,8 @@ struct StarRepoCard: View {
             .foregroundStyle(.primary)
         }
         .buttonStyle(.plain)
-        .help("Open the VoiceFlow repo on GitHub — a star helps this project grow.")
+        .vfClickableCursor()
+        .help("Open the project repo on GitHub, a star helps this project grow.")
     }
 
     // MARK: - Recent stargazers
@@ -148,6 +150,7 @@ struct StarRepoCard: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .vfClickableCursor()
                     .help(star.user.login)
                 }
             }

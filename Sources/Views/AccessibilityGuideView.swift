@@ -32,7 +32,7 @@ struct AccessibilityGuideView: View {
             }
 
             if !permissionService.accessibilityState.isGranted {
-                Text("Accessibility lets VoiceFlow paste the transcribed text into the active app. If the prompt didn't appear, grant it in 3 steps:")
+                Text("Accessibility lets Verba paste the transcribed text into the active app. If the prompt didn't appear, grant it in 3 steps:")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -48,8 +48,8 @@ struct AccessibilityGuideView: View {
 
                     step(
                         number: 2,
-                        title: "Click + and choose VoiceFlow from Applications",
-                        action: "Reveal VoiceFlow in Finder",
+                        title: "Click + and choose Verba from Applications",
+                        action: "Reveal Verba in Finder",
                         systemImage: "magnifyingglass"
                     ) {
                         permissionService.revealAppInFinder()
@@ -57,7 +57,7 @@ struct AccessibilityGuideView: View {
 
                     step(
                         number: 3,
-                        title: "Toggle it ON — VoiceFlow will detect it automatically, no restart needed.",
+                        title: "Toggle it ON — Verba will detect it automatically, no restart needed.",
                         action: nil,
                         systemImage: "checkmark.circle"
                     ) { }
@@ -71,6 +71,7 @@ struct AccessibilityGuideView: View {
                         Label(hasRequestedOnce ? "Retry Auto-Prompt" : "Try Auto-Prompt First", systemImage: "sparkles")
                     }
                     .buttonStyle(.bordered)
+                    .vfClickableCursor()
 
                     Spacer()
                     Text("Checking permission…")
@@ -117,6 +118,7 @@ struct AccessibilityGuideView: View {
                         Label(action, systemImage: systemImage)
                     }
                     .buttonStyle(.link)
+                    .vfClickableCursor()
                 }
             }
             Spacer()

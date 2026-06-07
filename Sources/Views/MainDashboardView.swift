@@ -20,15 +20,10 @@ enum VoiceFlowVersion {
 }
 
 // MARK: - Theme
+// Core design tokens. Extended in DesignSystem.swift with new tokens derived
+// from the Wispr Flow reference screenshots. See DesignSystem.swift for all
+// new additions (interactive, searchHighlight, Layout, VFButton, etc.)
 
-/// Design tokens. Single source of truth for colors, typography, radii,
-/// spacing, and shadows across the app. Modeled after Wispr Flow's visual
-/// language — warm cream bg, rounded cards, serif display type for hero
-/// moments, sans-serif for chrome.
-///
-/// Why a namespace, not a protocol: no runtime swapping needed. Flat static
-/// values compile to constants; zero dispatch overhead. If we ever need
-/// dark-mode variants, convert to computed properties on a ThemeMode enum.
 enum Theme {
     // MARK: - Adaptive color helper
     //
@@ -240,6 +235,7 @@ struct ThemedPillTabs<ID: Hashable>: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .vfClickableCursor()
             }
         }
         .padding(4)
@@ -342,6 +338,99 @@ struct LevelMeterView: View {
     }
 }
 
+private enum VoiceTransformKind: String, CaseIterable, Identifiable {
+    case polish
+    case rewrite
+    case promptEngineer
+    case custom
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .polish: return "Polish"
+        case .rewrite: return "Rewrite"
+        case .promptEngineer: return "Prompt Engineer"
+        case .custom: return "Create your own"
+        }
+    }
+
+    var shortDescription: String {
+        switch self {
+        case .polish: return "Clean grammar and filler words while keeping your voice."
+        case .rewrite: return "Restructure rough thoughts into clearer prose."
+        case .promptEngineer: return "Turn messy spoken intent into a structured AI prompt."
+        case .custom: return "Build a custom transform for your own writing workflow."
+        }
+    }
+
+    var detailDescription: String {
+        switch self {
+        case .polish:
+            return "Polish keeps your phrasing close, removes filler, fixes punctuation, and makes dictated text easier to send."
+        case .rewrite:
+            return "Rewrite can tighten phrasing, reorder ideas, and add structure when your spoken draft needs stronger shape."
+        case .promptEngineer:
+            return "Prompt Engineer converts rambling spoken requirements into a clean prompt for ChatGPT, Claude, Cursor, or another AI tool."
+        case .custom:
+            return "Custom transforms will let you save reusable prompts for specific writing tasks."
+        }
+    }
+
+    var mode: TranscriptProcessingMode? {
+        switch self {
+        case .polish: return .dictation
+        case .rewrite: return .rewrite
+        case .promptEngineer: return .promptEngineer
+        case .custom: return nil
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .polish: return "sparkles"
+        case .rewrite: return "text.badge.checkmark"
+        case .promptEngineer: return "wand.and.stars"
+        case .custom: return "plus"
+        }
+    }
+
+    var exampleBefore: String {
+        switch self {
+        case .polish, .rewrite:
+            return "hey so about the deck i added some slides but im not sure if they go with your part maybe we should remove the market trends thing"
+        case .promptEngineer:
+            return "i need help writing product descriptions for a skincare brand. it should feel warm and concise and include what inputs i should provide"
+        case .custom:
+            return "Say what you want the transform to do, then save it as a reusable writing tool."
+        }
+    }
+
+    var exampleAfter: String {
+        switch self {
+        case .polish:
+            return "I added a few slides to the deck, but I am not sure they fit with your section. We may want to remove the market trends slide before sending it."
+        case .rewrite:
+            return "I updated the deck with new slides. Before we send it, can you review whether they fit your section? I think the market trends slide may be worth removing."
+        case .promptEngineer:
+            return """
+            Goal: Create skincare product descriptions.
+
+            Inputs available:
+            - Product name
+            - Ingredients
+            - Target customer
+
+            Output requirements:
+            - Warm, concise, aspirational copy
+            - Clear benefits without medical claims
+            """
+        case .custom:
+            return "Custom transform output preview will appear here once this feature is connected."
+        }
+    }
+}
+
 /// Primary app window. Opens when the user clicks the Dock icon or launches
 /// from /Applications. Sidebar has three tabs:
 ///   - General  — day-to-day preferences (language, mode, mic filter, status)
@@ -363,6 +452,7 @@ struct MainDashboardView: View {
     let onTestRecordStart: () -> Void
     let onTestRecordStop: () -> Void
     let onOpenSettings: () -> Void
+    let onOpenFloatingNotes: () -> Void
     let onQuit: () -> Void
 
     @StateObject private var localDetector = LocalModelDetector.shared
@@ -376,10 +466,11 @@ struct MainDashboardView: View {
 
     enum Tab: String, CaseIterable {
         case home       = "Home"
-        case scratchpad = "Scratchpad"
-        case insights   = "Insights"
         case memory     = "Memory"
+        case scratchpad = "Notes"
+        case insights   = "Insights"
         case magicWords = "Magic Words"
+        case transforms = "Transforms"
         case runLog     = "Run Log"
         case devMode    = "Dev Mode"
         case settings   = "Settings"
@@ -391,22 +482,81 @@ struct MainDashboardView: View {
             case .insights:   return "chart.bar.fill"
             case .memory:     return "brain.head.profile"
             case .magicWords: return "wand.and.stars"
+            case .transforms: return "sparkles"
             case .runLog:     return "clock.arrow.circlepath"
             case .devMode:    return "hammer"
             case .settings:   return "gearshape"
             }
         }
 
-        /// Whether this tab renders in the sidebar nav. Cases that return
-        /// false are still routable via NotificationCenter and still have
-        /// view bodies — they just don't show as sidebar entries until we
-        /// flip this flag back.
+        /// Whether this tab renders in the sidebar nav. Dev Mode stays
+        /// routable, but hidden from the main product navigation.
         var isVisibleInSidebar: Bool {
+            self != .devMode
+        }
+    }
+
+    private enum SettingsPane: String, CaseIterable {
+        case general
+        case dictation
+        case aiModels
+        case permissions
+        case dataPrivacy
+        case devMode
+        case setup
+
+        enum Group: String {
+            case settings = "SETTINGS"
+            case system = "SYSTEM"
+        }
+
+        var title: String {
             switch self {
-            case .devMode: return false
-            case .home, .scratchpad, .insights, .memory, .magicWords, .runLog, .settings: return true
+            case .general: return "General"
+            case .dictation: return "Dictation"
+            case .aiModels: return "AI Models"
+            case .permissions: return "Permissions"
+            case .dataPrivacy: return "Data & Privacy"
+            case .devMode: return "Dev Mode"
+            case .setup: return "Setup"
             }
         }
+
+        var subtitle: String {
+            switch self {
+            case .general: return "Language, output, and feedback."
+            case .dictation: return "Provider, keys, and streaming."
+            case .aiModels: return "Post-processing and memory AI."
+            case .permissions: return "macOS access required for capture and typing."
+            case .dataPrivacy: return "Run history and custom vocabulary."
+            case .devMode: return "Beta access and developer routing."
+            case .setup: return "Onboarding and app actions."
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .general: return "slider.horizontal.3"
+            case .dictation: return "waveform"
+            case .aiModels: return "brain.head.profile"
+            case .permissions: return "lock.shield"
+            case .dataPrivacy: return "externaldrive"
+            case .devMode: return "hammer"
+            case .setup: return "gearshape"
+            }
+        }
+
+        var group: Group {
+            switch self {
+            case .general, .dictation, .aiModels:
+                return .settings
+            case .permissions, .dataPrivacy, .devMode, .setup:
+                return .system
+            }
+        }
+
+        static let settingsGroup: [SettingsPane] = [.general, .dictation, .aiModels]
+        static let systemGroup: [SettingsPane] = [.permissions, .dataPrivacy, .devMode, .setup]
     }
 
     // MARK: - Persisted state
@@ -415,6 +565,8 @@ struct MainDashboardView: View {
     // for a settings surface that changes at most a few times per session.
 
     @State private var selectedTab: Tab = .home
+    @State private var preferredInsightTab: String? = nil
+    @State private var selectedSettingsPane: SettingsPane = .general
 
     // General tab
     @State private var selectedLanguage: String = UserDefaults.standard.string(forKey: "language") ?? "hi"
@@ -457,7 +609,10 @@ struct MainDashboardView: View {
     // for the brief window before the seed runs, OR if a user manually
     // wipes the UserDefault. Either way, verbatim is the safe choice
     // since it's the only style that doesn't require an OpenAI key.
-    @State private var outputMode: String = UserDefaults.standard.string(forKey: "output_mode") ?? TranscriptOutputStyle.verbatim.rawValue
+    @State private var outputMode: String = {
+        let raw = UserDefaults.standard.string(forKey: "output_mode") ?? TranscriptOutputStyle.verbatim.rawValue
+        return raw == TranscriptOutputStyle.clean.rawValue ? TranscriptOutputStyle.translateEnglish.rawValue : raw
+    }()
     @State private var showKeySaved = false
     /// "Want Hinglish + 100+ languages?" upgrade disclosure on the Groq
     /// tier. Persisted so the open/closed state survives view rebuilds.
@@ -465,6 +620,14 @@ struct MainDashboardView: View {
     /// "Advanced — use my own Groq key" disclosure. Hidden by default;
     /// power users find it when they need it.
     @State private var showAdvancedKeys: Bool = false
+    @State private var isSettingsModalPresented: Bool = false
+    @State private var selectedTransform: VoiceTransformKind? = nil
+    @State private var pendingHomeDeleteRunID: UUID?
+    @State private var isHomeInsightsCardHovered = false
+    @State private var promptEngineerPromptDraft: String =
+        PromptEngineerProfile.systemPrompt
+    @State private var polishRuleStates: [PolishRule: Bool] =
+        Dictionary(uniqueKeysWithValues: PolishRule.allCases.map { ($0, PolishRule.isEnabled($0)) })
 
     // MARK: - Static option lists
 
@@ -475,20 +638,21 @@ struct MainDashboardView: View {
     ]
 
     private let processingModes: [(id: String, label: String)] = [
-        (TranscriptProcessingMode.dictation.rawValue, "Dictation"),
-        (TranscriptProcessingMode.rewrite.rawValue, "Rewrite")
+        (TranscriptProcessingMode.dictation.rawValue, "Polish"),
+        (TranscriptProcessingMode.rewrite.rawValue, "Rewrite"),
+        (TranscriptProcessingMode.promptEngineer.rawValue, "Prompt Engineer")
     ]
 
-    // User-facing labels are deliberately plain ("Original", "English",
+    // User-facing labels are deliberately plain ("Original", "English output",
     // Output mode labels — communicate the output contract directly:
     //   Original   — raw transcription, no transformation
-    //   English    — anything spoken gets translated to English
-    //   Romanized  — any language (Hindi, Marathi, etc.) written in English letters
+    //   English output — any language written in English letters
+    //   Translate  — anything spoken gets translated to English
     // Internal raw values stay unchanged so existing UserDefaults parse cleanly.
     private let outputModes: [(id: String, label: String)] = [
-        (TranscriptOutputStyle.verbatim.rawValue,      "Original"),
-        (TranscriptOutputStyle.clean.rawValue,         "English"),
-        (TranscriptOutputStyle.cleanHinglish.rawValue, "Romanized")
+        (TranscriptOutputStyle.verbatim.rawValue,         "Original"),
+        (TranscriptOutputStyle.cleanHinglish.rawValue,    "English output"),
+        (TranscriptOutputStyle.translateEnglish.rawValue, "Translate")
     ]
 
     /// Cloud polish options. Filtered by tier:
@@ -522,86 +686,107 @@ struct MainDashboardView: View {
     // MARK: - Body
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Sidebar — cream bg, no hard divider, pill-style selection
-            VStack(alignment: .leading, spacing: 16) {
-                // Brand mark
-                HStack(spacing: 8) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
-                    Text("VoiceFlow")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 4)
+        ZStack {
+            HStack(spacing: 0) {
+                // Sidebar — cream bg, no hard divider, pill-style selection
+                VStack(alignment: .leading, spacing: 16) {
+                    // Brand mark
+                    HStack(spacing: 10) {
+                        VFBrandLogo(size: 32, variant: .automatic, cornerRadius: 7)
+                        Text(AppBrand.name)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(Theme.textPrimary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 4)
 
-                VStack(spacing: 2) {
-                    // Sidebar shows user-facing tabs only. Dev Mode remains
-                    // hidden until the developer tools are ready for normal
-                    // users, but Magic Words is now a first-class setup page.
-                    ForEach(Tab.allCases.filter { $0.isVisibleInSidebar }, id: \.self) { tab in
-                        sidebarButton(tab)
+                    VStack(spacing: 2) {
+                        // Sidebar shows user-facing tabs only. Memory is now a
+                        // first-class product surface; Dev Mode remains hidden.
+                        ForEach(Tab.allCases.filter(\.isVisibleInSidebar), id: \.self) { tab in
+                            sidebarButton(tab)
+                        }
+                    }
+
+                    Spacer()
+
+                    // Theme toggle — light/dark, persisted via ThemeManager.
+                    // Lives above the GitHub block so it's discoverable but
+                    // not the first thing users see.
+                    ThemeTogglePill(manager: themeManager)
+                        .padding(.horizontal, 2)
+
+                    // GitHub Star block — sidebar-sized, replaces the wide
+                    // StarRepoCard that used to sit on Home. Same intent
+                    // (drive-by stars + social proof) in the right surface.
+                    SidebarStarBlock()
+
+                    // Footer — subtle, aligned with the open-source positioning.
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(VoiceFlowVersion.userFacing)
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.textTertiary)
+                        Text("Local-first · Open source")
+                            .font(.system(size: 11))
+                            .foregroundColor(Theme.textTertiary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+                }
+                .frame(width: 200)
+                .padding(.vertical, 16)
+                .padding(.horizontal, 10)
+                .background(Theme.canvas)
+
+                // Content — uses mainContent (almost-white) so the warmer
+                // cream sidebar reads as a distinct nav surface. Cards inside
+                // each tab use Theme.surface (slightly cream) to define
+                // themselves against this background.
+                Group {
+                    switch selectedTab {
+                    case .home:       homeContent
+                    case .scratchpad:
+                        ScratchpadView(
+                            runStore: runStore,
+                            onOpenFloatingNotes: onOpenFloatingNotes
+                        )
+                    case .insights:   InsightsView(runStore: runStore, initialTab: preferredInsightTab)
+                    case .memory:     KnowledgeGraphView()
+                    case .magicWords: MagicWordsSettingsView()
+                    case .transforms: transformsContent
+                    case .runLog:     RunLogView(runStore: runStore)
+                    case .devMode:    DevModeSettingsView()
+                    case .settings:   homeContent
                     }
                 }
-
-                Spacer()
-
-                // Theme toggle — light/dark, persisted via ThemeManager.
-                // Lives above the GitHub block so it's discoverable but
-                // not the first thing users see.
-                ThemeTogglePill(manager: themeManager)
-                    .padding(.horizontal, 2)
-
-                // Premium / OpenAI-key upsell — sits above the GitHub
-                // block because the conversion intent is higher value.
-                // Visual treatment uses accent gradient to differentiate
-                // from the surface-tinted star block underneath, so the
-                // eye lands here first.
-                SidebarPremiumBlock()
-
-                // GitHub Star block — sidebar-sized, replaces the wide
-                // StarRepoCard that used to sit on Home. Same intent
-                // (drive-by stars + social proof) in the right surface.
-                SidebarStarBlock()
-
-                // Footer — subtle, no upsell garbage (aligned with our
-                // open-source positioning).
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(VoiceFlowVersion.userFacing)
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textTertiary)
-                    Text("Local-first · Open source")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textTertiary)
-                }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 4)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.mainContent)
             }
-            .frame(width: 200)
-            .padding(.vertical, 16)
-            .padding(.horizontal, 10)
-            .background(Theme.canvas)
 
-            // Content — uses mainContent (almost-white) so the warmer
-            // cream sidebar reads as a distinct nav surface. Cards inside
-            // each tab use Theme.surface (slightly cream) to define
-            // themselves against this background.
-            Group {
-                switch selectedTab {
-                case .home:       homeContent
-                case .scratchpad: ScratchpadView(runStore: runStore)
-                case .insights:   InsightsView(runStore: runStore)
-                case .memory:     KnowledgeGraphView()
-                case .magicWords: MagicWordsSettingsView()
-                case .runLog:     RunLogView(runStore: runStore)
-                case .devMode:    DevModeSettingsView()
-                case .settings:   settingsContent
-                }
+            if isSettingsModalPresented {
+                settingsModalOverlay
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.mainContent)
+
+            if let transform = selectedTransform {
+                transformDetailOverlay(transform)
+            }
+
+            if let pendingHomeDeleteRunID {
+                Color.black.opacity(0.28)
+                    .ignoresSafeArea()
+                    .onTapGesture { self.pendingHomeDeleteRunID = nil }
+                VFConfirmDialog(
+                    title: "Delete this transcript?",
+                    message: "This removes the saved audio, transcript, and pipeline trace for this dictation.",
+                    confirmLabel: "Yes, delete it",
+                    onCancel: { self.pendingHomeDeleteRunID = nil },
+                    onConfirm: {
+                        runStore.deleteRun(id: pendingHomeDeleteRunID)
+                        self.pendingHomeDeleteRunID = nil
+                    }
+                )
+                .zIndex(30)
+            }
         }
         .frame(minWidth: 860, minHeight: 640)
         // Drive the entire window's color scheme from ThemeManager. All
@@ -617,19 +802,21 @@ struct MainDashboardView: View {
             localDetector.detect()
         }
         // Listen for menu-bar / chip / external requests to jump to a
-        // specific tab. AppDelegate's openSettings() now posts this
-        // instead of opening the legacy SettingsView popup.
+        // specific tab. Settings is a modal overlay, not a content tab.
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("VoiceFlow.SelectTab"))) { note in
             guard let raw = note.userInfo?["tab"] as? String else { return }
             switch raw {
             case "home":       selectedTab = .home
             case "scratchpad": selectedTab = .scratchpad
-            case "insights":   selectedTab = .insights
+            case "insights":
+                preferredInsightTab = "Usage"
+                selectedTab = .insights
             case "memory":     selectedTab = .memory
             case "magicWords": selectedTab = .magicWords
+            case "transforms": selectedTab = .transforms
             case "runLog":     selectedTab = .runLog
             case "devMode":    selectedTab = .devMode
-            case "settings":   selectedTab = .settings
+            case "settings":   presentSettingsModal()
             default: break
             }
         }
@@ -637,7 +824,18 @@ struct MainDashboardView: View {
 
     @ViewBuilder
     private func sidebarButton(_ tab: Tab) -> some View {
-        Button(action: { selectedTab = tab }) {
+        let isActive = tab == .settings ? isSettingsModalPresented : selectedTab == tab
+
+        Button {
+            if tab == .settings {
+                presentSettingsModal()
+            } else {
+                if tab == .insights {
+                    preferredInsightTab = "Usage"
+                }
+                selectedTab = tab
+            }
+        } label: {
             HStack(spacing: 10) {
                 Image(systemName: tab.icon)
                     .frame(width: 18)
@@ -650,59 +848,900 @@ struct MainDashboardView: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                    .fill(selectedTab == tab ? Theme.surface : Color.clear)
+                    .fill(isActive ? Theme.sidebarActiveFill : Color.clear)
             )
-            .foregroundColor(selectedTab == tab ? Theme.textPrimary : Theme.textSecondary)
+            .foregroundColor(isActive ? Theme.textPrimary : Theme.textSecondary)
         }
         .buttonStyle(.plain)
+        .vfClickableCursor()
+    }
+
+    // MARK: - Transforms tab
+
+    private var transformsContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                transformsHeader
+                transformsHero
+                transformsGridHeader
+                transformsGrid
+            }
+            .frame(maxWidth: 960, alignment: .leading)
+            .padding(.horizontal, Theme.Layout.contentHPad)
+            .padding(.top, 36)
+            .padding(.bottom, 48)
+        }
+        .background(Theme.mainContent)
+    }
+
+    private var transformsHeader: some View {
+        HStack(alignment: .center, spacing: Theme.Space.sm) {
+            Text("Transforms")
+                .font(.vfPageTitle)
+                .foregroundColor(Theme.textPrimary)
+            VFBadge(label: "Experimental", style: .experimental)
+            Spacer(minLength: Theme.Space.xl)
+            transformOutputToggles
+        }
+    }
+
+    private var transformOutputToggles: some View {
+        HStack(spacing: Theme.Space.md) {
+            transformCompactToggle(label: "English output", isOn: englishOutputToggleBinding)
+            transformCompactToggle(label: "Translate", isOn: translateOutputToggleBinding)
+        }
+    }
+
+    private func transformCompactToggle(label: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Text(label)
+                .font(.vfCalloutMedium)
+                .foregroundColor(Theme.textPrimary)
+            VFSwitch(isOn: isOn)
+        }
+        .padding(.leading, Theme.Space.md)
+        .padding(.trailing, Theme.Space.sm)
+        .padding(.vertical, Theme.Space.sm)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Theme.compactToggleFill)
+        )
+    }
+
+    private var transformsHero: some View {
+        ZStack(alignment: .trailing) {
+            HStack(alignment: .center, spacing: Theme.Space.xl) {
+                VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                    Text("Transform works anywhere you write")
+                        .font(.system(size: 26, weight: .semibold, design: .serif))
+                        .foregroundColor(Theme.textOnDark)
+                    Text("Apply a Transform to rewrite, clean up, or restructure text after you dictate.")
+                        .font(.vfBody)
+                        .foregroundColor(Theme.textOnDarkSecondary)
+                        .lineSpacing(3)
+                        .frame(maxWidth: 420, alignment: .leading)
+                    transformHeroActions
+                        .padding(.top, Theme.Space.md)
+                }
+                Spacer(minLength: 0)
+                transformHeroIconCloud
+            }
+            .padding(Theme.Space.xxl)
+        }
+        .frame(minHeight: 172)
+        .background {
+            VFBlueMeshHeroBackground()
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous)
+                .strokeBorder(Theme.dividerStrong, lineWidth: 1)
+        )
+        .shadow(color: Theme.Shadow.elevated.color,
+                radius: Theme.Shadow.elevated.radius,
+                x: 0,
+                y: Theme.Shadow.elevated.y)
+    }
+
+    private var transformHeroActions: some View {
+        HStack(spacing: Theme.Space.xl) {
+            Button {
+                selectedTransform = .polish
+            } label: {
+                Text("Try it out")
+                    .font(.vfBodyMedium)
+                    .foregroundColor(Theme.textPrimary)
+                    .padding(.horizontal, 18)
+                    .frame(height: 44)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
+                            .fill(Theme.surfaceElevated)
+                    )
+            }
+            .buttonStyle(.plain)
+            .vfClickableCursor()
+
+            Button {
+                selectedTransform = .promptEngineer
+            } label: {
+                Text("How it works")
+                    .font(.vfBodyMedium)
+                    .foregroundColor(Theme.textOnDark)
+                    .frame(height: 44)
+            }
+            .buttonStyle(.plain)
+            .vfClickableCursor()
+        }
+    }
+
+    private var transformHeroIconCloud: some View {
+        TransformHeroAppIconCloud()
+            .frame(width: 240, height: 132)
+            .clipped()
+    }
+
+    private struct TransformHeroAppIconCloud: View {
+        private struct Placement {
+            let x: CGFloat
+            let y: CGFloat
+            let diameter: CGFloat
+            let iconSize: CGFloat
+        }
+
+        private let placements: [Placement] = [
+            Placement(x: 42, y: -38, diameter: 48, iconSize: 29),
+            Placement(x: 92, y: -30, diameter: 48, iconSize: 29),
+            Placement(x: -12, y: -2, diameter: 44, iconSize: 27),
+            Placement(x: 44, y: 3, diameter: 44, iconSize: 27),
+            Placement(x: 96, y: 6, diameter: 44, iconSize: 27),
+            Placement(x: -54, y: 38, diameter: 42, iconSize: 25),
+            Placement(x: 8, y: 42, diameter: 42, iconSize: 25),
+            Placement(x: 68, y: 40, diameter: 42, iconSize: 25)
+        ]
+
+        private var icons: [TransformHeroAppIconDescriptor] {
+            Array(TransformHeroAppIconResolver.resolvedIcons.prefix(placements.count))
+        }
+
+        var body: some View {
+            ZStack {
+                ForEach(icons.indices, id: \.self) { index in
+                    let icon = icons[index]
+                    let placement = placements[index]
+                    TransformHeroAppIconTile(
+                        name: icon.name,
+                        image: icon.image,
+                        diameter: placement.diameter,
+                        iconSize: placement.iconSize
+                    )
+                    .offset(x: placement.x, y: placement.y)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .accessibilityLabel("Apps where transforms work")
+        }
+    }
+
+    private struct TransformHeroAppIconTile: View {
+        let name: String
+        let image: NSImage
+        let diameter: CGFloat
+        let iconSize: CGFloat
+
+        var body: some View {
+            ZStack {
+                Circle()
+                    .fill(Theme.textOnDark.opacity(0.16))
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Theme.textOnDark.opacity(0.20), lineWidth: 2)
+                    )
+
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: iconSize, height: iconSize)
+                    .clipShape(RoundedRectangle(cornerRadius: iconSize * 0.20, style: .continuous))
+            }
+            .frame(width: diameter, height: diameter)
+            .help(name)
+        }
+    }
+
+    private struct TransformHeroAppIconDescriptor: Identifiable {
+        let id: String
+        let name: String
+        let image: NSImage
+    }
+
+    private struct TransformHeroAppIconCandidate {
+        let id: String
+        let displayName: String
+        let bundleIDs: [String]
+        let appNames: [String]
+    }
+
+    private enum TransformHeroAppIconResolver {
+        static let resolvedIcons: [TransformHeroAppIconDescriptor] = candidates.compactMap { candidate in
+            guard let image = icon(for: candidate) else { return nil }
+            return TransformHeroAppIconDescriptor(
+                id: candidate.id,
+                name: candidate.displayName,
+                image: image
+            )
+        }
+
+        private static let candidates: [TransformHeroAppIconCandidate] = [
+            TransformHeroAppIconCandidate(
+                id: "claude",
+                displayName: "Claude",
+                bundleIDs: ["com.anthropic.claude", "com.anthropic.Claude", "com.anthropic.claudefordesktop"],
+                appNames: ["Claude"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "cursor",
+                displayName: "Cursor",
+                bundleIDs: ["com.todesktop.230313mzl4w4u92", "com.cursor.Cursor"],
+                appNames: ["Cursor"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "copilot",
+                displayName: "Copilot",
+                bundleIDs: ["com.microsoft.copilot", "com.microsoft.Copilot"],
+                appNames: ["Microsoft Copilot", "Copilot"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "notes",
+                displayName: "Notes",
+                bundleIDs: ["com.apple.Notes"],
+                appNames: ["Notes"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "whatsapp",
+                displayName: "WhatsApp",
+                bundleIDs: ["net.whatsapp.WhatsApp", "WhatsApp"],
+                appNames: ["WhatsApp"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "slack",
+                displayName: "Slack",
+                bundleIDs: ["com.tinyspeck.slackmacgap"],
+                appNames: ["Slack"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "gmail",
+                displayName: "Gmail",
+                bundleIDs: ["com.google.Gmail"],
+                appNames: ["Gmail", "Mail for Gmail"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "linkedin",
+                displayName: "LinkedIn",
+                bundleIDs: ["com.linkedin.LinkedIn"],
+                appNames: ["LinkedIn"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "codex",
+                displayName: "Codex",
+                bundleIDs: ["com.openai.codex", "com.openai.Codex"],
+                appNames: ["Codex"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "chatgpt",
+                displayName: "ChatGPT",
+                bundleIDs: ["com.openai.chat", "com.openai.chatgpt"],
+                appNames: ["ChatGPT"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "chrome",
+                displayName: "Google Chrome",
+                bundleIDs: ["com.google.Chrome"],
+                appNames: ["Google Chrome"]
+            ),
+            TransformHeroAppIconCandidate(
+                id: "vscode",
+                displayName: "Visual Studio Code",
+                bundleIDs: ["com.microsoft.VSCode"],
+                appNames: ["Visual Studio Code"]
+            )
+        ]
+
+        private static func icon(for candidate: TransformHeroAppIconCandidate) -> NSImage? {
+            for bundleID in candidate.bundleIDs {
+                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID),
+                   let icon = sizedIcon(for: url) {
+                    return icon
+                }
+            }
+
+            for appName in candidate.appNames {
+                for root in applicationRoots {
+                    let url = root.appendingPathComponent("\(appName).app")
+                    if FileManager.default.fileExists(atPath: url.path),
+                       let icon = sizedIcon(for: url) {
+                        return icon
+                    }
+                }
+            }
+
+            return nil
+        }
+
+        private static var applicationRoots: [URL] {
+            [
+                URL(fileURLWithPath: "/Applications"),
+                URL(fileURLWithPath: "/System/Applications"),
+                FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
+            ]
+        }
+
+        private static func sizedIcon(for url: URL) -> NSImage? {
+            let icon = (NSWorkspace.shared.icon(forFile: url.path).copy() as? NSImage)
+                ?? NSWorkspace.shared.icon(forFile: url.path)
+            icon.size = NSSize(width: 64, height: 64)
+            return icon
+        }
+    }
+
+    private var transformsGridHeader: some View {
+        HStack(alignment: .center) {
+            Text("My Transforms")
+                .font(.vfSectionTitle)
+                .foregroundColor(Theme.textPrimary)
+            Spacer()
+            VFButton(title: "Reset to Default", icon: "arrow.counterclockwise", style: .secondary, isCompact: true) {
+                resetTransforms()
+            }
+            VFButton(title: "Add New", icon: "plus", style: .primary, isCompact: true) {
+                selectedTransform = .custom
+            }
+        }
+    }
+
+    private var transformsGrid: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: Theme.Space.md)],
+            alignment: .leading,
+            spacing: Theme.Space.md
+        ) {
+            ForEach(VoiceTransformKind.allCases) { transform in
+                transformCard(transform)
+            }
+        }
+    }
+
+    private func transformCard(_ transform: VoiceTransformKind) -> some View {
+        let isActive = isTransformActive(transform)
+
+        return Button {
+            selectTransform(transform)
+        } label: {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                HStack {
+                    Image(systemName: transform.icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(isActive ? Theme.interactive : Theme.textPrimary)
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(isActive ? Theme.interactiveSoft : Theme.surface))
+                    Spacer()
+                    if isActive {
+                        VFBadge(label: "Active", style: .promo)
+                    }
+                }
+                Spacer(minLength: 0)
+                Text(transform.title)
+                    .font(.vfBodyMedium)
+                    .foregroundColor(Theme.textPrimary)
+                Text(transform.shortDescription)
+                    .font(.vfCallout)
+                    .foregroundColor(Theme.textSecondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(Theme.Space.xl)
+            .frame(minHeight: 154, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .fill(Theme.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .strokeBorder(isActive ? Theme.interactive.opacity(0.42) : Theme.divider, lineWidth: isActive ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .vfClickableCursor()
+    }
+
+    private var englishOutputToggleBinding: Binding<Bool> {
+        Binding(
+            get: { outputMode == TranscriptOutputStyle.cleanHinglish.rawValue },
+            set: { isOn in
+                setOutputMode(isOn ? .cleanHinglish : .verbatim)
+            }
+        )
+    }
+
+    private var translateOutputToggleBinding: Binding<Bool> {
+        Binding(
+            get: {
+                outputMode == TranscriptOutputStyle.translateEnglish.rawValue
+                    || outputMode == TranscriptOutputStyle.clean.rawValue
+            },
+            set: { isOn in
+                if isOn {
+                    setOutputMode(.translateEnglish)
+                } else if outputMode == TranscriptOutputStyle.translateEnglish.rawValue
+                            || outputMode == TranscriptOutputStyle.clean.rawValue {
+                    setOutputMode(.verbatim)
+                }
+            }
+        )
+    }
+
+    private func polishRuleBinding(_ rule: PolishRule) -> Binding<Bool> {
+        Binding(
+            get: { polishRuleStates[rule] ?? PolishRule.isEnabled(rule) },
+            set: { isOn in
+                polishRuleStates[rule] = isOn
+                PolishRule.set(rule, isEnabled: isOn)
+            }
+        )
+    }
+
+    private func transformModeToggleBinding(_ transform: VoiceTransformKind) -> Binding<Bool> {
+        Binding(
+            get: { isTransformActive(transform) },
+            set: { isOn in
+                guard let mode = transform.mode else { return }
+                setProcessingMode(isOn ? mode : .dictation)
+            }
+        )
+    }
+
+    private func setOutputMode(_ style: TranscriptOutputStyle) {
+        outputMode = style.rawValue
+        UserDefaults.standard.set(style.rawValue, forKey: "output_mode")
+    }
+
+    private func setProcessingMode(_ mode: TranscriptProcessingMode) {
+        processingMode = mode.rawValue
+        UserDefaults.standard.set(mode.rawValue, forKey: "processing_mode")
+    }
+
+    private func isTransformActive(_ transform: VoiceTransformKind) -> Bool {
+        switch transform {
+        case .polish:
+            return processingMode == TranscriptProcessingMode.dictation.rawValue
+        case .rewrite:
+            return processingMode == TranscriptProcessingMode.rewrite.rawValue
+        case .promptEngineer:
+            return processingMode == TranscriptProcessingMode.promptEngineer.rawValue
+        case .custom:
+            return false
+        }
+    }
+
+    private func selectTransform(_ transform: VoiceTransformKind) {
+        selectedTransform = transform
+    }
+
+    private func resetTransforms() {
+        setProcessingMode(.dictation)
+        setOutputMode(.verbatim)
+        resetPolishRules()
+        promptEngineerPromptDraft = PromptEngineerProfile.defaultSystemPrompt
+        UserDefaults.standard.removeObject(forKey: PromptEngineerProfile.userDefaultsKey)
+    }
+
+    private func transformDetailOverlay(_ transform: VoiceTransformKind) -> some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    selectedTransform = nil
+                }
+
+            transformDetailPanel(transform)
+                .transition(.scale(scale: 0.985).combined(with: .opacity))
+        }
+        .zIndex(18)
+        .onExitCommand {
+            selectedTransform = nil
+        }
+    }
+
+    private func transformDetailPanel(_ transform: VoiceTransformKind) -> some View {
+        HStack(spacing: 0) {
+            transformDetailSidebar(transform)
+            Rectangle()
+                .fill(Theme.divider)
+                .frame(width: 1)
+            transformDetailMain(transform)
+        }
+        .frame(width: 920, height: 600, alignment: .top)
+        .background(Theme.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.RadiusExtra.modal, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.RadiusExtra.modal, style: .continuous)
+                .strokeBorder(Theme.divider, lineWidth: 1)
+        )
+        .shadow(color: Theme.Shadow.elevated.color,
+                radius: Theme.Shadow.elevated.radius,
+                x: 0,
+                y: Theme.Shadow.elevated.y)
+    }
+
+    private func transformDetailSidebar(_ transform: VoiceTransformKind) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            Text(transform.title)
+                .font(.custom("Georgia", size: 32))
+                .foregroundColor(Theme.textPrimary)
+
+            HStack(spacing: Theme.Space.sm) {
+                Image(systemName: transform.icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(isTransformActive(transform) ? Theme.interactive : Theme.textPrimary)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        Circle().fill(isTransformActive(transform) ? Theme.interactiveSoft : Theme.secondaryButtonFill)
+                    )
+                Text(isTransformActive(transform) ? "Default transform" : "Available transform")
+                    .font(.vfCalloutMedium)
+                    .foregroundColor(Theme.textSecondary)
+            }
+
+            Text(transform.detailDescription)
+                .font(.vfBody)
+                .foregroundColor(Theme.textPrimary)
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Rectangle()
+                .fill(Theme.divider)
+                .frame(height: 1)
+
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                Text("Example of transformed text")
+                    .font(.vfBodyMedium)
+                    .foregroundColor(Theme.textPrimary)
+                Text(transform.exampleBefore)
+                    .font(.vfCallout)
+                    .foregroundColor(Theme.textSecondary)
+                    .strikethrough(transform != .custom, color: Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                transformExampleOutput(transform)
+            }
+
+            Spacer()
+        }
+        .padding(Theme.Space.xxl)
+        .frame(width: 316)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.surfaceElevated)
+    }
+
+    private func transformExampleOutput(_ transform: VoiceTransformKind) -> some View {
+        Text(transform.exampleAfter)
+            .font(.vfCalloutMedium)
+            .foregroundColor(transform == .custom ? Theme.textSecondary : Theme.textPrimary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(transform == .custom ? Theme.Space.md : 4)
+            .background(
+                RoundedRectangle(cornerRadius: transform == .custom ? Theme.RadiusExtra.input : 5, style: .continuous)
+                    .fill(transform == .custom ? Theme.surface : Theme.searchHighlight.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: transform == .custom ? Theme.RadiusExtra.input : 5, style: .continuous)
+                    .strokeBorder(transform == .custom ? Theme.divider : Color.clear, lineWidth: 1)
+            )
+    }
+
+    private func transformDetailMain(_ transform: VoiceTransformKind) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                HStack {
+                    Spacer()
+                    Text("Autosave On")
+                        .font(.vfCalloutMedium)
+                        .foregroundColor(Theme.textSecondary)
+                    Button {
+                        resetTransform(transform)
+                    } label: {
+                        HStack(spacing: Theme.Space.sm) {
+                            Image(systemName: "arrow.counterclockwise")
+                            Text("Reset to Default")
+                        }
+                        .font(.vfBodyMedium)
+                        .foregroundColor(Theme.textPrimary)
+                    }
+                    .buttonStyle(.plain)
+                    .vfClickableCursor()
+                }
+
+                switch transform {
+                case .polish, .rewrite:
+                    transformModeSection(transform)
+                    transformRulesSection(transform)
+                case .promptEngineer:
+                    transformModeSection(transform)
+                    transformRulesSection(transform)
+                    promptEngineerEditorSection
+                case .custom:
+                    customTransformPlaceholder
+                }
+            }
+            .padding(Theme.Space.xxl)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.mainContent)
+    }
+
+    private func transformModeSection(_ transform: VoiceTransformKind) -> some View {
+        VStack(spacing: 0) {
+            transformRuleRow(
+                title: "Enable \(transform.title)",
+                description: transformModeDescription(transform)
+            ) {
+                VFSwitch(isOn: transformModeToggleBinding(transform))
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: Theme.RadiusExtra.modal, style: .continuous)
+                .fill(Theme.surface)
+        )
+    }
+
+    private func transformModeDescription(_ transform: VoiceTransformKind) -> String {
+        switch transform {
+        case .polish:
+            return "Use Polish as the default transform when you release fn."
+        case .rewrite:
+            return "Use Rewrite as the default transform when you release fn."
+        case .promptEngineer:
+            return "Use Prompt Engineer as the default transform when you release fn."
+        case .custom:
+            return "Custom transforms are not available yet."
+        }
+    }
+
+    private func transformRulesSection(_ transform: VoiceTransformKind) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            HStack {
+                Text("Output and model")
+                    .font(.vfBodyMedium)
+                    .foregroundColor(Theme.textPrimary)
+                Spacer()
+                VFDropdown(
+                    options: polishOptions.map { (id: $0.id, label: compactPolishLabel($0.label)) },
+                    selection: $polishBackendId,
+                    width: 220
+                )
+                .onChange(of: polishBackendId) { newValue in
+                    UserDefaults.standard.set(newValue, forKey: PolishBackend.userDefaultsKey)
+                }
+            }
+
+            VStack(spacing: 0) {
+                transformRuleRow(
+                    title: "English output",
+                    description: "Write Hindi, Marathi, or mixed speech in English letters without translating."
+                ) {
+                    VFSwitch(isOn: englishOutputToggleBinding)
+                }
+                transformRuleDivider
+                transformRuleRow(
+                    title: "Translate to English",
+                    description: "Translate non-English speech into English."
+                ) {
+                    VFSwitch(isOn: translateOutputToggleBinding)
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: Theme.RadiusExtra.modal, style: .continuous)
+                    .fill(Theme.surface)
+            )
+
+            if transform == .polish {
+                polishRulesSection
+            }
+        }
+    }
+
+    private var polishRulesSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text("Rules for Polish")
+                .font(.vfBodyMedium)
+                .foregroundColor(Theme.textPrimary)
+
+            VStack(spacing: 0) {
+                ForEach(Array(PolishRule.allCases.enumerated()), id: \.element.id) { index, rule in
+                    if index > 0 {
+                        transformRuleDivider
+                    }
+                    transformRuleRow(
+                        title: rule.title,
+                        description: rule.description
+                    ) {
+                        VFSwitch(isOn: polishRuleBinding(rule))
+                    }
+                }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: Theme.RadiusExtra.modal, style: .continuous)
+                    .fill(Theme.surface)
+            )
+        }
+    }
+
+    private var transformRuleDivider: some View {
+        Rectangle()
+            .fill(Theme.divider)
+            .frame(height: 1)
+            .padding(.leading, Theme.Space.xl)
+    }
+
+    private func transformRuleRow<Control: View>(
+        title: String,
+        description: String,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
+        HStack(alignment: .center, spacing: Theme.Space.lg) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.vfBody)
+                    .foregroundColor(Theme.textPrimary)
+                Text(description)
+                    .font(.vfCallout)
+                    .foregroundColor(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: Theme.Space.lg)
+            control()
+        }
+        .padding(.horizontal, Theme.Space.xl)
+        .frame(minHeight: 72)
+    }
+
+    private var promptEngineerEditorSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            Text("Customize prompt")
+                .font(.vfBodyMedium)
+                .foregroundColor(Theme.textPrimary)
+            TextEditor(text: $promptEngineerPromptDraft)
+                .font(.system(size: 13))
+                .foregroundColor(Theme.textPrimary)
+                .padding(Theme.Space.md)
+                .frame(minHeight: 286)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                        .fill(Theme.surfaceElevated)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                        .strokeBorder(Theme.dividerStrong, lineWidth: 1)
+                )
+                .onChange(of: promptEngineerPromptDraft) { newValue in
+                    UserDefaults.standard.set(newValue, forKey: PromptEngineerProfile.userDefaultsKey)
+                }
+            Text("This prompt is used by Prompt Engineer before it creates the final AI prompt.")
+                .font(.vfCallout)
+                .foregroundColor(Theme.textSecondary)
+        }
+        .padding(Theme.Space.xl)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.RadiusExtra.modal, style: .continuous)
+                .fill(Theme.surface)
+        )
+    }
+
+    private var customTransformPlaceholder: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            Text("Create your own")
+                .font(.vfBodyMedium)
+                .foregroundColor(Theme.textPrimary)
+            Text("Custom transforms need saved prompt templates and shortcut routing. This card is visible now so the surface matches the product direction without pretending the workflow is ready.")
+                .font(.vfCallout)
+                .foregroundColor(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            VFButton(title: "Coming soon", icon: "plus", style: .secondary, isCompact: true, isDisabled: true) {}
+        }
+        .padding(Theme.Space.xl)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.RadiusExtra.modal, style: .continuous)
+                .fill(Theme.surface)
+        )
+    }
+
+    private func resetTransform(_ transform: VoiceTransformKind) {
+        switch transform {
+        case .polish:
+            setProcessingMode(.dictation)
+            resetPolishRules()
+        case .rewrite:
+            setProcessingMode(.rewrite)
+        case .promptEngineer:
+            setProcessingMode(.promptEngineer)
+            promptEngineerPromptDraft = PromptEngineerProfile.defaultSystemPrompt
+            UserDefaults.standard.removeObject(forKey: PromptEngineerProfile.userDefaultsKey)
+        case .custom:
+            break
+        }
+    }
+
+    private func resetPolishRules() {
+        let resetStates = Dictionary(uniqueKeysWithValues: PolishRule.allCases.map { rule in
+            PolishRule.set(rule, isEnabled: true)
+            return (rule, true)
+        })
+        polishRuleStates = resetStates
     }
 
     // MARK: - Home tab
 
+    private enum HomeLayout {
+        static let maxContentWidth: CGFloat = Theme.Layout.appCaptureWidth
+            - Theme.Layout.sidebarWidth
+            - (Theme.Layout.contentHPad * 2)
+        static let insightColumnWidth: CGFloat = 250
+        static let columnGap: CGFloat = Theme.Space.xl
+        static let timelinePreviewLimit = 48
+        static var primaryColumnWidth: CGFloat {
+            maxContentWidth - insightColumnWidth - columnGap
+        }
+    }
+
     /// Home layout, Wispr Flow-inspired:
     /// - Personalized greeting with hotkey badge
     /// - Dark hero card ("Hold fn to dictate")
-    /// - Stats row (total dictations, words, seconds saved) — live from RunStore
-    /// - Recent dictations preview (top 3)
-    /// - Star Repo card (open-source positioning)
+    /// - Right insight card — live from RunStore, routes to Insights
+    /// - Recent dictations timeline
     ///
     /// Deeper settings live under the Settings tab. Home stays light and
     /// glanceable — the thing users see first shouldn't be a config dump.
-    /// Two-column layout with two sticky regions:
-    /// - Left column has a fixed greeting at the top and a scroll view
-    ///   underneath containing the hero card + transcript timeline.
-    /// - Right column has a fixed stats card pinned to the top.
-    ///
-    /// "Sticky" here means literally outside the ScrollView, not
-    /// LazyVStack pinned headers — that would still let them scroll
-    /// off in some configurations. Putting them outside guarantees
-    /// they never move regardless of scroll content.
+    /// The measured wide layout keeps the transcript timeline in the left
+    /// column so the right side remains intentional whitespace below Insights.
     private var homeContent: some View {
-        HStack(alignment: .top, spacing: Theme.Space.md) {
-            // Left column — greeting fixed at top, content scrolls below
-            VStack(alignment: .leading, spacing: 0) {
-                greetingBlock
-                    .padding(.horizontal, Theme.Space.xl)
-                    .padding(.top, Theme.Space.xl)
-                    .padding(.bottom, Theme.Space.lg)
-                    .background(Theme.mainContent) // mask any content scrolling under
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                        heroCard
-                        dictationsTimeline
-                    }
-                    .padding(.horizontal, Theme.Space.xl)
-                    .padding(.bottom, Theme.Space.xl)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-
-            // Right column — stats fixed at top
-            statsCardCompact
-                .padding(.top, Theme.Space.xl)
-                .padding(.trailing, Theme.Space.xl)
+        ScrollView {
+            homeMeasuredLayout
+                .frame(maxWidth: HomeLayout.maxContentWidth, alignment: .topLeading)
+                .padding(.horizontal, Theme.Layout.contentHPad)
+                .padding(.top, Theme.Layout.contentVPad)
+                .padding(.bottom, 48)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .background(Theme.mainContent)
+    }
+
+    private var homeMeasuredLayout: some View {
+        let stats = ComputedStats.compute(from: runStore.summaries)
+
+        return VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            greetingBlock
+                .frame(maxWidth: HomeLayout.primaryColumnWidth, alignment: .leading)
+
+            HStack(alignment: .top, spacing: HomeLayout.columnGap) {
+                VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                    heroCard
+                    dictationsTimeline
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                    statsCardCompact(stats: stats)
+                    HomeVoiceProfileCard(stats: stats) {
+                        preferredInsightTab = "Voice"
+                        selectedTab = .insights
+                    }
+                }
+                .frame(width: HomeLayout.insightColumnWidth, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     // MARK: Home — Greeting
@@ -710,7 +1749,7 @@ struct MainDashboardView: View {
     private var greetingBlock: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("Hey there, get back into the flow with")
-                .font(.system(size: 22, weight: .semibold, design: .serif))
+                .font(.vfPageTitle)
                 .foregroundColor(Theme.textPrimary)
             HotkeyBadge(label: "fn")
             Spacer()
@@ -728,30 +1767,22 @@ struct MainDashboardView: View {
     // MARK: Home — Hero card
 
     private var heroCard: some View {
-        HStack(alignment: .top, spacing: 20) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("Hold down")
-                        .font(.system(size: 22, weight: .semibold, design: .serif))
-                        .foregroundColor(Theme.textOnDark)
-                    HotkeyBadge(label: "fn")
-                    Text("to dictate")
-                        .font(.system(size: 22, weight: .semibold, design: .serif))
-                        .foregroundColor(Theme.textOnDark)
-                }
-
-                Text("VoiceFlow works in every app — email, Slack, your editor, a browser tab. Hold fn, speak, release. Your words appear wherever your cursor is.")
-                    .font(.system(size: 13))
-                    .foregroundColor(Theme.textOnDark.opacity(0.7))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 420, alignment: .leading)
-
-            }
-            Spacer()
-        }
-        .padding(Theme.Space.xl)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .themedAnimatedHeroCard()
+        VFHeroBanner(
+            segments: [
+                .plain("Hold down "),
+                .italic("fn"),
+                .plain(" to dictate")
+            ],
+            bodyText: "Verba works in every app. Hold fn, speak, release. Your words appear wherever your cursor is.",
+            cta: ("See how it works", {
+                NotificationCenter.default.post(
+                    name: Notification.Name("VoiceFlow.SelectTab"),
+                    object: nil,
+                    userInfo: ["tab": "transforms"]
+                )
+            })
+        )
+        .frame(minHeight: 176)
     }
 
     // MARK: Home — Stats (compact right-side card)
@@ -759,23 +1790,63 @@ struct MainDashboardView: View {
     /// Three stats stacked vertically in a single right-side card. Sized
     /// to sit beside the hero so the top of Home reads as one balanced
     /// row instead of a stacked stack of full-width blocks.
-    private var statsCardCompact: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            statLine(value: "\(DashboardStats.totalDictations(runStore))", label: "dictations")
-            statLine(value: "\(DashboardStats.totalWords(runStore))",      label: "total words")
-            statLine(value: DashboardStats.streakText(runStore),           label: "streak")
+    private func statsCardCompact(stats: ComputedStats) -> some View {
+        let streak = homeStreakMetric(stats: stats)
+
+        return Button {
+            preferredInsightTab = "Usage"
+            selectedTab = .insights
+        } label: {
+            VStack(alignment: .leading, spacing: 22) {
+                homeInsightMetric(value: "\(stats.totalWords)", label: "total words")
+                homeInsightMetric(value: stats.averageWPM > 0 ? "\(stats.averageWPM)" : "—", label: "wpm")
+                homeInsightMetric(value: streak.value, label: streak.label)
+            }
+            .padding(.horizontal, Theme.Space.xl)
+            .padding(.vertical, 28)
+            .frame(maxWidth: .infinity, minHeight: 176, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .fill(Theme.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .strokeBorder(isHomeInsightsCardHovered ? Theme.dividerStrong : Theme.divider, lineWidth: 1)
+            )
+            .shadow(color: isHomeInsightsCardHovered ? Theme.Shadow.card.color : Color.clear,
+                    radius: Theme.Shadow.card.radius,
+                    x: 0,
+                    y: Theme.Shadow.card.y)
         }
-        .frame(width: 200, alignment: .leading)
-        .themedCard()
+        .buttonStyle(.plain)
+        .vfClickableCursor()
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.14)) {
+                isHomeInsightsCardHovered = hovering
+            }
+        }
+        .help("Open Insights")
+        .accessibilityLabel("Open Insights")
     }
 
-    private func statLine(value: String, label: String) -> some View {
+    private func homeStreakMetric(stats: ComputedStats) -> (value: String, label: String) {
+        guard stats.currentStreakDays > 0 else { return ("—", "streak") }
+        return (
+            "\(stats.currentStreakDays)",
+            "day\(stats.currentStreakDays == 1 ? "" : "s")"
+        )
+    }
+
+    private func homeInsightMetric(value: String, label: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(value)
-                .font(.system(size: 22, weight: .semibold, design: .serif))
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundColor(Theme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .monospacedDigit()
             Text(label)
-                .font(.system(size: 12))
+                .font(.vfCallout)
                 .foregroundColor(Theme.textSecondary)
         }
     }
@@ -791,47 +1862,80 @@ struct MainDashboardView: View {
     /// preserves whatever ordering RunStore considers canonical.
     @ViewBuilder
     private var dictationsTimeline: some View {
-        if runStore.summaries.isEmpty {
+        if homeTimelineSummaries.isEmpty {
             emptyTimelinePlaceholder
         } else {
-            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.xl) {
                 ForEach(groupedSummaries, id: \.dayKey) { group in
                     dayBlock(label: group.label, rows: group.summaries)
                 }
+
+                if hasAdditionalHomeSummaries {
+                    homeTimelineFooter
+                }
             }
         }
+    }
+
+    private var homeTimelineSummaries: [RunSummary] {
+        Array(runStore.summaries.prefix(HomeLayout.timelinePreviewLimit))
+    }
+
+    private var hasAdditionalHomeSummaries: Bool {
+        runStore.summaries.count > HomeLayout.timelinePreviewLimit
     }
 
     private var emptyTimelinePlaceholder: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("No dictations yet")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.vfBodyMedium)
                 .foregroundColor(Theme.textPrimary)
             Text("Hold fn anywhere on your Mac and start speaking. Your transcripts will appear here.")
-                .font(.system(size: 12))
+                .font(.vfCallout)
                 .foregroundColor(Theme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .themedCard()
+        .padding(Theme.Space.xl)
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .fill(Theme.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .strokeBorder(Theme.divider, lineWidth: 1)
+        )
     }
 
     private func dayBlock(label: String, rows: [RunSummary]) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             Text(label)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.vfDateHeader)
                 .foregroundColor(Theme.textTertiary)
-                .tracking(0.8)
+                .tracking(0.5)
                 .padding(.leading, 4)
 
             VStack(spacing: 0) {
                 ForEach(rows.indices, id: \.self) { i in
-                    HomeTimelineRow(summary: rows[i], runStore: runStore)
+                    HomeTimelineRow(
+                        summary: rows[i],
+                        runStore: runStore,
+                        onDelete: {
+                            pendingHomeDeleteRunID = rows[i].id
+                        }
+                    )
                     if i < rows.count - 1 {
                         Divider().background(Theme.divider)
                     }
                 }
             }
-            .themedCard(padding: 0)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .fill(Theme.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .strokeBorder(Theme.divider, lineWidth: 1)
+            )
         }
     }
 
@@ -844,7 +1948,7 @@ struct MainDashboardView: View {
 
     private var groupedSummaries: [DaySection] {
         let cal = Calendar.current
-        let buckets = Dictionary(grouping: runStore.summaries) { summary in
+        let buckets = Dictionary(grouping: homeTimelineSummaries) { summary in
             cal.startOfDay(for: summary.createdAt)
         }
         return buckets.keys
@@ -858,13 +1962,43 @@ struct MainDashboardView: View {
             }
     }
 
+    private var homeTimelineFooter: some View {
+        Button {
+            selectedTab = .runLog
+        } label: {
+            HStack(spacing: Theme.Space.sm) {
+                Text("Showing latest \(HomeLayout.timelinePreviewLimit)")
+                    .font(.vfCalloutMedium)
+                    .foregroundColor(Theme.textPrimary)
+                Text("View all \(runStore.summaries.count) in Run Log")
+                    .font(.vfCallout)
+                    .foregroundColor(Theme.textSecondary)
+                Spacer()
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(Theme.textSecondary)
+            }
+            .padding(.horizontal, Theme.Space.lg)
+            .frame(height: 44)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .fill(Theme.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .strokeBorder(Theme.divider, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .vfClickableCursor()
+        .help("Open the full Run Log")
+    }
+
     private var recordingHeader: some View {
         HStack(spacing: 12) {
-            Image(systemName: "waveform.circle.fill")
-                .font(.system(size: 32))
-                .foregroundStyle(.tint)
+            VFBrandLogo(size: 34, variant: .automatic, cornerRadius: 8)
             VStack(alignment: .leading, spacing: 2) {
-                Text("VoiceFlow")
+                Text(AppBrand.name)
                     .font(.system(size: 22, weight: .bold))
                 Text("Hold Fn to dictate anywhere on your Mac.")
                     .font(.caption)
@@ -885,7 +2019,7 @@ struct MainDashboardView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("About")
                     .font(.headline)
-                Text("VoiceFlow \(VoiceFlowVersion.userFacing)")
+                Text("\(AppBrand.name) \(VoiceFlowVersion.userFacing)")
                     .font(.subheadline.bold())
                 Text("Voice typing for macOS — powered by OpenAI Whisper with optional local LLM post-processing.")
                     .font(.caption)
@@ -1013,9 +2147,11 @@ struct MainDashboardView: View {
     private var transcriptionModeHelperText: String {
         switch TranscriptProcessingMode(rawValue: processingMode) ?? .dictation {
         case .dictation:
-            return "Keeps your spoken phrasing. Removes fillers, fixes punctuation, normalizes pauses. Doesn't restructure. Fast — what you'd want for chat / quick capture."
+            return "Polish keeps your spoken phrasing, removes fillers, fixes punctuation, and normalizes pauses. Good for chat and quick capture."
         case .rewrite:
             return "Lets the polish LLM tighten phrasing, fix grammar, restructure for clarity, and add list / header formatting when appropriate. Slower (more LLM work), worth it for emails, docs, and anywhere you'd otherwise paste into Grammarly."
+        case .promptEngineer:
+            return "Prompt Engineer turns rough dictated intent into a structured AI prompt. Use it when you are speaking to ChatGPT, Claude, Cursor, or another AI tool."
         }
     }
 
@@ -1025,11 +2161,13 @@ struct MainDashboardView: View {
                 HStack {
                     Text("Run Log").font(.headline)
                     Spacer()
-                    Toggle("", isOn: $runLogEnabled)
-                        .labelsHidden()
-                        .onChange(of: runLogEnabled) { newValue in
+                    VFSwitch(isOn: Binding(
+                        get: { runLogEnabled },
+                        set: { newValue in
+                            runLogEnabled = newValue
                             UserDefaults.standard.set(newValue, forKey: "run_log_enabled")
                         }
+                    ))
                 }
 
                 // Cap sub-toggle was here. Removed in v0.5.1 — retention is
@@ -1057,6 +2195,13 @@ struct MainDashboardView: View {
             return "Run history is off. No audio, transcripts, or prompts are saved to disk."
         }
         return "Save audio, transcripts, and prompts locally for each dictation. Nothing leaves your Mac. History grows until you clear it from the Run Log tab."
+    }
+
+    private var compactRunHistoryDescription: String {
+        if !runLogEnabled {
+            return "Run history is off. Nothing is saved to disk."
+        }
+        return "Save dictation history locally on this Mac."
     }
 
     /// Sensitivity = inverse of the noise gate threshold. We want the
@@ -1155,6 +2300,7 @@ struct MainDashboardView: View {
                 )
         }
         .buttonStyle(.plain)
+        .vfClickableCursor()
     }
 
     private var statusCard: some View {
@@ -1207,6 +2353,7 @@ struct MainDashboardView: View {
                     permissionService.refreshStatus()
                 }
                 .buttonStyle(.bordered)
+                .vfClickableCursor()
                 .controlSize(.small)
                 .padding(.top, 4)
             }
@@ -1215,51 +2362,763 @@ struct MainDashboardView: View {
 
     // MARK: - Settings tab
 
-    private var settingsContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                settingsHeader
-                feedbackSurfaceCard
-                providerCard
-                memoryProviderCard
-                realtimeStreamingCard
-                polishModelCard
-                outputStyleCard
-                // Polish Mode (Dictation vs Rewrite) — controls how
-                // aggressively the LLM transforms the polished output.
-                // No effect on Verbatim style; the help text inside
-                // the card surfaces a chip that says so when relevant.
-                transcriptionModeCard
-                // Language picker is only meaningful for Original mode —
-                // English / Hinglish resolve their language hint inside
-                // WhisperService.route() based on the output contract.
-                // Conditional render keeps the Settings page tidy when
-                // the picker has nothing to do.
-                if outputMode == TranscriptOutputStyle.verbatim.rawValue {
-                    languageCard
-                }
-                // Mic sensitivity card — uses live MicrophoneProbe + LevelMeterView
-                // so users can SEE their voice peak past the threshold tick before
-                // committing. Supersedes the older orphaned microphoneFilterCard.
-                microphoneSensitivityCard
-
-                // Custom vocabulary — names, brands, jargon. Injected into both
-                // Whisper STT prompt (biases acoustic decoder) AND polish LLM
-                // prompt (safety-net repair) so proper nouns survive the pipeline.
-                vocabularyCard
-                permissionsCard
-                setupCard
-                footerActions
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
+    private func presentSettingsModal(_ pane: SettingsPane = .general) {
+        selectedSettingsPane = pane
+        withAnimation(.easeOut(duration: 0.16)) {
+            isSettingsModalPresented = true
         }
+    }
+
+    private func dismissSettingsModal() {
+        microphoneProbe.stop()
+        withAnimation(.easeOut(duration: 0.14)) {
+            isSettingsModalPresented = false
+        }
+    }
+
+    private var settingsModalOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    dismissSettingsModal()
+                }
+
+            settingsContent
+                .transition(.scale(scale: 0.985).combined(with: .opacity))
+        }
+        .zIndex(20)
+        .onExitCommand {
+            dismissSettingsModal()
+        }
+    }
+
+    private var settingsContent: some View {
+        HStack(spacing: 0) {
+            settingsSidebar
+            Rectangle()
+                .fill(Theme.divider)
+                .frame(width: 1)
+            settingsPaneBody
+        }
+        .frame(width: Theme.Layout.settingsPanelWidth,
+               height: Theme.Layout.settingsPanelHeight,
+               alignment: .top)
+        .background(Theme.surfaceElevated)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.RadiusExtra.modal, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.RadiusExtra.modal, style: .continuous)
+                .strokeBorder(Theme.divider, lineWidth: 1)
+        )
+        .shadow(color: Theme.Shadow.elevated.color,
+                radius: Theme.Shadow.elevated.radius,
+                x: 0,
+                y: Theme.Shadow.elevated.y)
         // Stop the probe when the user navigates away from the dashboard.
         // We do this here (vs. inside the card) so the probe shuts down
         // even when the user switches tabs without the card going through
         // its own .onDisappear.
         .onDisappear {
             microphoneProbe.stop()
+        }
+    }
+
+    private var settingsSidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            settingsSidebarGroup("SETTINGS", panes: SettingsPane.settingsGroup)
+
+            Rectangle()
+                .fill(Theme.divider)
+                .frame(height: 1)
+                .padding(.horizontal, Theme.Space.lg)
+                .padding(.vertical, Theme.Space.md)
+
+            settingsSidebarGroup("SYSTEM", panes: SettingsPane.systemGroup)
+
+            Spacer(minLength: Theme.Space.xl)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(AppBrand.name)
+                    .font(.vfCalloutSemibold)
+                    .foregroundColor(Theme.textPrimary)
+                Text(VoiceFlowVersion.userFacing)
+                    .font(.vfCaption)
+                    .foregroundColor(Theme.textTertiary)
+            }
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.bottom, Theme.Space.lg)
+        }
+        .frame(width: Theme.Layout.settingsNavWidth)
+        .background(Theme.surfaceElevated)
+    }
+
+    private func settingsSidebarGroup(_ title: String, panes: [SettingsPane]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            VFSectionLabel(text: title)
+            ForEach(panes, id: \.self) { pane in
+                settingsSidebarItem(pane)
+            }
+        }
+        .padding(.top, title == "SETTINGS" ? Theme.Space.lg : 0)
+    }
+
+    private func settingsSidebarItem(_ pane: SettingsPane) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.16)) {
+                selectedSettingsPane = pane
+            }
+        } label: {
+            HStack(spacing: Theme.Space.sm) {
+                Image(systemName: pane.icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18)
+                Text(pane.title)
+                    .font(.vfBody)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .foregroundColor(selectedSettingsPane == pane ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, Theme.Space.md)
+            .frame(height: 38)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                    .fill(selectedSettingsPane == pane ? Theme.sidebarActiveFill : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .vfClickableCursor()
+        .padding(.horizontal, Theme.Space.sm)
+    }
+
+    private var settingsPaneBody: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: Theme.Space.lg) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(selectedSettingsPane.title)
+                        .font(.vfSectionTitle)
+                        .foregroundColor(Theme.textPrimary)
+                    Text(selectedSettingsPane.subtitle)
+                        .font(.vfCallout)
+                        .foregroundColor(Theme.textSecondary)
+                }
+                Spacer()
+                Button {
+                    dismissSettingsModal()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(Theme.textTertiary)
+                        .frame(width: 30, height: 30)
+                        .background(
+                            Circle()
+                                .fill(Theme.surface)
+                        )
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Theme.divider, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+                .vfClickableCursor()
+                .help("Close Settings")
+            }
+            .padding(.horizontal, Theme.Layout.contentHPad)
+            .padding(.top, 52)
+            .padding(.bottom, Theme.Space.sm)
+
+            ScrollView {
+                selectedSettingsPaneContent
+                    .padding(.bottom, Theme.Layout.contentVPad)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(maxWidth: .infinity, minHeight: Theme.Layout.settingsPanelHeight, maxHeight: Theme.Layout.settingsPanelHeight, alignment: .top)
+        .background(Theme.mainContent)
+    }
+
+    @ViewBuilder
+    private var selectedSettingsPaneContent: some View {
+        switch selectedSettingsPane {
+        case .general:
+            generalSettingsPane
+        case .dictation:
+            dictationSettingsPane
+        case .aiModels:
+            aiModelsSettingsPane
+        case .permissions:
+            permissionsSettingsPane
+        case .dataPrivacy:
+            dataPrivacySettingsPane
+        case .devMode:
+            DevModeSettingsView(
+                showsHeader: false,
+                wrapsInScrollView: false,
+                horizontalPadding: Theme.Layout.contentHPad,
+                topPadding: Theme.Space.lg
+            )
+        case .setup:
+            setupSettingsPane
+        }
+    }
+
+    private var generalSettingsPane: some View {
+        VStack(spacing: 0) {
+            VFFormSection(header: "Output") {
+                VFFormRow(
+                    label: "Language",
+                    description: "Whisper language hint for Original output."
+                ) {
+                    VFDropdown(
+                        options: languages.map { (id: $0.code, label: $0.label) },
+                        selection: $selectedLanguage,
+                        width: 156
+                    )
+                    .onChange(of: selectedLanguage) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: "language")
+                    }
+                }
+                VFDivider(inset: Theme.Space.xl)
+                VFFormRow(
+                    label: "Output style",
+                    description: compactOutputStyleDescription
+                ) {
+                    VFDropdown(
+                        options: visibleOutputModes.map { (id: $0.id, label: $0.label) },
+                        selection: $outputMode,
+                        width: 156
+                    )
+                    .onChange(of: outputMode) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: "output_mode")
+                    }
+                }
+                VFDivider(inset: Theme.Space.xl)
+                VFFormRow(
+                    label: "Transform mode",
+                    description: compactProcessingModeDescription
+                ) {
+                    VFDropdown(
+                        options: processingModes.map { (id: $0.id, label: $0.label) },
+                        selection: $processingMode,
+                        width: 156
+                    )
+                    .onChange(of: processingMode) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: "processing_mode")
+                    }
+                }
+            }
+
+            VFFormSection(header: "Feedback") {
+                VFFormRow(
+                    label: "Feedback surface",
+                    description: selectedFeedbackSurfaceStyle.subtitle
+                ) {
+                    VFDropdown(
+                        options: FeedbackSurfaceStyle.allCases.map { (id: $0.rawValue, label: $0.title) },
+                        selection: $feedbackSurfaceStyle,
+                        width: 188
+                    )
+                    .onChange(of: feedbackSurfaceStyle) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: FeedbackSurfaceStyle.userDefaultsKey)
+                        NotificationCenter.default.post(
+                            name: .voiceFlowFeedbackSurfaceStyleChanged,
+                            object: nil
+                        )
+                    }
+                }
+            }
+
+            VFFormSection(header: "Microphone") {
+                settingsMicrophoneSensitivity
+            }
+        }
+        .onAppear { reconcileOutputModeForTier() }
+        .onChange(of: provider) { _ in reconcileOutputModeForTier() }
+        .onChange(of: openAIKey) { _ in reconcileOutputModeForTier() }
+    }
+
+    private var dictationSettingsPane: some View {
+        VStack(spacing: 0) {
+            VFFormSection(header: "Provider") {
+                VFFormRow(
+                    label: "Transcription provider",
+                    description: "The service that turns speech into text."
+                ) {
+                    VFDropdown(
+                        options: [
+                            (id: TranscriptionProvider.groq.rawValue, label: "Groq · Free"),
+                            (id: TranscriptionProvider.openai.rawValue, label: "OpenAI")
+                        ],
+                        selection: $provider,
+                        width: 180
+                    )
+                    .onChange(of: provider) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: "transcription_provider")
+                    }
+                }
+
+                if provider == TranscriptionProvider.groq.rawValue {
+                    VFDivider(inset: Theme.Space.xl)
+                    VFFormRow(
+                        label: "Free tier",
+                        description: "Multilingual dictation with the embedded beta key."
+                    ) {
+                        VFBadge(label: "Active", style: .promo)
+                    }
+                    VFDivider(inset: Theme.Space.xl)
+                    settingsKeyRow(
+                        label: "Groq API key",
+                        description: "Optional override for the embedded beta key.",
+                        placeholder: "gsk_...",
+                        text: $groqKey,
+                        save: {
+                            UserDefaults.standard.set(groqKey, forKey: "groq_api_key")
+                        }
+                    )
+                } else {
+                    VFDivider(inset: Theme.Space.xl)
+                    settingsKeyRow(
+                        label: "OpenAI API key",
+                        description: "Required for OpenAI transcription.",
+                        placeholder: "sk-...",
+                        text: $openAIKey,
+                        save: {
+                            UserDefaults.standard.set(openAIKey, forKey: "openai_api_key")
+                        }
+                    )
+                }
+            }
+
+            VFFormSection(header: "Streaming") {
+                VFFormRow(
+                    label: "Realtime streaming",
+                    description: "Lower perceived latency on long dictations. Falls back to batch upload if needed."
+                ) {
+                    VFSwitch(isOn: Binding(
+                        get: { realtimeStreaming },
+                        set: { newValue in
+                            realtimeStreaming = newValue
+                            UserDefaults.standard.set(newValue, forKey: "realtime_streaming_enabled")
+                        }
+                    ))
+                }
+            }
+        }
+    }
+
+    private var aiModelsSettingsPane: some View {
+        VStack(spacing: 0) {
+            VFFormSection(header: "Post-processing") {
+                VFFormRow(
+                    label: "Polish model",
+                    description: "Used when Verba cleans, rewrites, or formats the transcript."
+                ) {
+                    VFDropdown(
+                        options: polishOptions.map { (id: $0.id, label: compactPolishLabel($0.label)) },
+                        selection: $polishBackendId,
+                        width: 236
+                    )
+                    .onChange(of: polishBackendId) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: PolishBackend.userDefaultsKey)
+                    }
+                }
+                VFDivider(inset: Theme.Space.xl)
+                VFFormRow(
+                    label: "Local models",
+                    description: compactLocalModelStatusText
+                ) {
+                    VFButton(
+                        title: localDetector.isDetecting ? "Refreshing" : "Refresh",
+                        icon: "arrow.clockwise",
+                        style: .secondary,
+                        isCompact: true,
+                        isLoading: localDetector.isDetecting,
+                        isDisabled: localDetector.isDetecting
+                    ) {
+                        localDetector.detect()
+                    }
+                }
+                if selectedLocalModelUnavailable {
+                    VFDivider(inset: Theme.Space.xl)
+                    settingsWarningRow("Selected local model is not currently detected. Start the server and refresh before dictating.")
+                }
+            }
+
+            VFFormSection(header: "Memory & Chat") {
+                VStack(alignment: .leading, spacing: Theme.Space.md) {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Memory provider")
+                                .font(.vfBody)
+                                .foregroundColor(Theme.textPrimary)
+                            Text("Used by Memory chat and entity extraction.")
+                                .font(.vfDescription)
+                                .foregroundColor(Theme.textSecondary)
+                        }
+                        Spacer()
+                    }
+                    MemoryProviderPicker()
+                }
+                .padding(.horizontal, Theme.Space.xl)
+                .padding(.vertical, Theme.Space.lg)
+            }
+        }
+    }
+
+    private var permissionsSettingsPane: some View {
+        VStack(spacing: 0) {
+            VFFormSection(header: "macOS Permissions") {
+                settingsPermissionRow(
+                    title: "Microphone",
+                    description: "Required to hear your voice.",
+                    state: permissionService.microphoneState,
+                    pane: .microphone
+                )
+                VFDivider(inset: Theme.Space.xl)
+                settingsPermissionRow(
+                    title: "Accessibility",
+                    description: "Required to type the transcript into other apps.",
+                    state: permissionService.accessibilityState,
+                    pane: .accessibility
+                )
+                VFDivider(inset: Theme.Space.xl)
+                settingsPermissionRow(
+                    title: "Input Monitoring",
+                    description: "Required to detect the fn key.",
+                    state: permissionService.inputMonitoringState,
+                    pane: .inputMonitoring
+                )
+                VFDivider(inset: Theme.Space.xl)
+                settingsPermissionRow(
+                    title: "Screen Recording",
+                    description: "Optional for screenshot context summaries.",
+                    state: permissionService.screenRecordingState,
+                    pane: .screenRecording
+                )
+            }
+
+            VFFormSection(header: "Status") {
+                VFFormRow(
+                    label: permissionService.allRequiredGranted ? "Ready" : "Action needed",
+                    description: permissionService.allRequiredGranted
+                        ? "All required permissions are granted."
+                        : "Global hotkeys will not work until required permissions are granted."
+                ) {
+                    VFButton(title: "Re-check", icon: "arrow.clockwise", style: .secondary, isCompact: true) {
+                        permissionService.refreshStatus()
+                    }
+                }
+            }
+        }
+    }
+
+    private var dataPrivacySettingsPane: some View {
+        VStack(spacing: 0) {
+            VFFormSection(header: "Run History") {
+                VFFormRow(
+                    label: "Save run history",
+                    description: compactRunHistoryDescription
+                ) {
+                    VFSwitch(isOn: Binding(
+                        get: { runLogEnabled },
+                        set: { newValue in
+                            runLogEnabled = newValue
+                            UserDefaults.standard.set(newValue, forKey: "run_log_enabled")
+                        }
+                    ))
+                }
+                VFDivider(inset: Theme.Space.xl)
+                settingsStaticRow(
+                    label: "Storage",
+                    description: "Audio, transcripts, prompts, and diagnostics stay on this Mac.",
+                    value: "Local"
+                )
+            }
+
+            VFFormSection(header: "Custom Vocabulary") {
+                settingsVocabularyEditor
+            }
+        }
+    }
+
+    private var setupSettingsPane: some View {
+        VStack(spacing: 0) {
+            VFFormSection(header: "Welcome Flow") {
+                VFFormRow(
+                    label: "Run onboarding again",
+                    description: "Revisit feature overview, permissions, preferences, and the test step."
+                ) {
+                    VFButton(title: "Open", icon: "sparkles", style: .secondary, isCompact: true) {
+                        NotificationCenter.default.post(
+                            name: Notification.Name("VoiceFlow.RestartOnboarding"),
+                            object: nil
+                        )
+                    }
+                }
+            }
+
+            VFFormSection(header: "App") {
+                settingsStaticRow(
+                    label: "Version",
+                    description: "Current installed Verba build.",
+                    value: VoiceFlowVersion.userFacing
+                )
+                VFDivider(inset: Theme.Space.xl)
+                VFFormRow(
+                    label: "Quit Verba",
+                    description: "Stop the menu bar helper and close the app."
+                ) {
+                    VFButton(title: "Quit", icon: "power", style: .destructive, isCompact: true) {
+                        onQuit()
+                    }
+                }
+            }
+        }
+    }
+
+    private var settingsMicrophoneSensitivity: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sensitivity")
+                        .font(.vfBody)
+                        .foregroundColor(Theme.textPrimary)
+                    Text(settingsMicrophoneDescription)
+                        .font(.vfDescription)
+                        .foregroundColor(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                VFButton(
+                    title: microphoneProbe.isProbing ? "Stop" : "Test mic",
+                    icon: microphoneProbe.isProbing ? "stop.fill" : "mic.fill",
+                    style: microphoneProbe.isProbing ? .destructive : .secondary,
+                    isCompact: true
+                ) {
+                    if microphoneProbe.isProbing {
+                        microphoneProbe.stop()
+                    } else {
+                        microphoneProbe.start()
+                    }
+                }
+            }
+
+            LevelMeterView(
+                level: microphoneProbe.currentLevel,
+                threshold: MicrophoneProbe.normalizedThreshold(noiseGateThreshold),
+                isActive: microphoneProbe.isProbing
+            )
+            .padding(.top, Theme.Space.sm)
+
+            HStack {
+                Text("More sensitive")
+                    .font(.vfCaption)
+                    .foregroundColor(Theme.textTertiary)
+                Slider(value: $noiseGateThreshold, in: 0.001...0.05, step: 0.001)
+                    .tint(Theme.interactive)
+                    .onChange(of: noiseGateThreshold) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: "noise_gate_threshold")
+                    }
+                Text("Filters noise")
+                    .font(.vfCaption)
+                    .foregroundColor(Theme.textTertiary)
+                Text(String(format: "%.3f", noiseGateThreshold))
+                    .font(.vfCaption.monospacedDigit())
+                    .foregroundColor(Theme.textSecondary)
+                    .frame(width: 44, alignment: .trailing)
+            }
+        }
+        .padding(.horizontal, Theme.Space.xl)
+        .padding(.vertical, Theme.Space.lg)
+    }
+
+    private var settingsVocabularyEditor: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Vocabulary")
+                        .font(.vfBody)
+                        .foregroundColor(Theme.textPrimary)
+                    Text("Names, brands, and jargon that should survive dictation.")
+                        .font(.vfDescription)
+                        .foregroundColor(Theme.textSecondary)
+                }
+                Spacer()
+                Text(vocabularyCountLabel(parsedVocabularyCount))
+                    .font(.vfCaption.monospacedDigit())
+                    .foregroundColor(Theme.textTertiary)
+            }
+
+            ZStack(alignment: .topLeading) {
+                if customVocabulary.isEmpty {
+                    Text("e.g. Raunak, Verba, Shopsense, Fynd")
+                        .font(.vfCallout)
+                        .foregroundColor(Theme.textTertiary)
+                        .padding(.horizontal, Theme.Space.md)
+                        .padding(.vertical, 10)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $customVocabulary)
+                    .font(.vfCallout)
+                    .foregroundColor(Theme.textPrimary)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(minHeight: 116)
+                    .onChange(of: customVocabulary) { newValue in
+                        UserDefaults.standard.set(newValue, forKey: UserVocabulary.userDefaultsKey)
+                    }
+            }
+            .background(
+                RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                    .fill(Theme.surfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                    .strokeBorder(Theme.dividerStrong, lineWidth: 1)
+            )
+        }
+        .padding(.horizontal, Theme.Space.xl)
+        .padding(.vertical, Theme.Space.lg)
+    }
+
+    @ViewBuilder
+    private func settingsKeyRow(
+        label: String,
+        description: String,
+        placeholder: String,
+        text: Binding<String>,
+        save: @escaping () -> Void
+    ) -> some View {
+        VFFormRow(label: label, description: description) {
+            SecureField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(Theme.textPrimary)
+                .vfInputChrome()
+                .frame(width: 292)
+                .onSubmit {
+                    save()
+                    flashSaved()
+                }
+                .onChange(of: text.wrappedValue) { _ in
+                    save()
+                }
+        }
+    }
+
+    private func settingsPermissionRow(
+        title: String,
+        description: String,
+        state: PermissionState,
+        pane: PermissionPane
+    ) -> some View {
+        VFFormRow(label: title, description: description) {
+            if state.isGranted {
+                HStack(spacing: Theme.Space.xs) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Theme.success)
+                    Text("Granted")
+                        .font(.vfCalloutMedium)
+                        .foregroundColor(Theme.success)
+                }
+            } else {
+                VFButton(title: "Open Settings", style: .primary, isCompact: true) {
+                    permissionService.openPrivacyPane(pane)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func settingsStaticRow(label: String, description: String, value: String) -> some View {
+        VFFormRow(label: label, description: description) {
+            Text(value)
+                .font(.vfCalloutMedium)
+                .foregroundColor(Theme.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.sm, style: .continuous)
+                        .fill(Theme.surfaceElevated)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.sm, style: .continuous)
+                        .strokeBorder(Theme.divider, lineWidth: 1)
+                )
+        }
+    }
+
+    private func settingsWarningRow(_ message: String) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(Theme.warning)
+            Text(message)
+                .font(.vfCallout)
+                .foregroundColor(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.Space.xl)
+        .padding(.vertical, Theme.Space.md)
+    }
+
+    private var localModelStatusText: String {
+        if localDetector.models.isEmpty {
+            return "No local servers detected. Start LM Studio on :1234 or Ollama on :11434, then refresh."
+        }
+        return "\(localDetector.models.count) local model\(localDetector.models.count == 1 ? "" : "s") detected."
+    }
+
+    private var compactLocalModelStatusText: String {
+        if localDetector.models.isEmpty {
+            return "No LM Studio or Ollama server detected."
+        }
+        return "\(localDetector.models.count) local model\(localDetector.models.count == 1 ? "" : "s") detected."
+    }
+
+    private var settingsMicrophoneDescription: String {
+        if microphoneProbe.isProbing {
+            let levelPct = Int((microphoneProbe.currentLevel * 100).rounded())
+            return "Speak normally. Live level: \(levelPct)%. Voice should cross the threshold tick."
+        }
+        return "Test your room level and adjust what counts as speech."
+    }
+
+    private var selectedLocalModelUnavailable: Bool {
+        (polishBackendId.hasPrefix("lmstudio::") || polishBackendId.hasPrefix("ollama::"))
+            && !polishOptions.contains(where: { $0.id == polishBackendId })
+    }
+
+    private func compactPolishLabel(_ label: String) -> String {
+        label
+            .replacingOccurrences(of: " (vision context)", with: "")
+            .replacingOccurrences(of: " (recommended)", with: "")
+            .replacingOccurrences(of: " (cheaper, stronger role adherence)", with: "")
+    }
+
+    private var compactOutputStyleDescription: String {
+        switch TranscriptOutputStyle(rawValue: outputMode) ?? .verbatim {
+        case .verbatim:
+            return "Raw transcription with minimal cleanup."
+        case .clean:
+            return "Translate spoken language into English."
+        case .cleanHinglish:
+            return "Multilingual speech written in English letters."
+        case .translateEnglish:
+            return "Translate spoken language into English."
+        }
+    }
+
+    private var compactProcessingModeDescription: String {
+        switch TranscriptProcessingMode(rawValue: processingMode) ?? .dictation {
+        case .dictation:
+            return "Polish dictation with clarity, structure, and your tone."
+        case .rewrite:
+            return "Clean phrasing, structure, and grammar."
+        case .promptEngineer:
+            return "Format dictated intent for AI agents."
         }
     }
 
@@ -1310,6 +3169,7 @@ struct MainDashboardView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .vfClickableCursor()
                     .help("Open the mic for ~12s so you can read out loud and see your level")
                 }
 
@@ -1394,7 +3254,7 @@ struct MainDashboardView: View {
                 // macOS 14. ZStack-with-Text is the standard workaround.
                 ZStack(alignment: .topLeading) {
                     if customVocabulary.isEmpty {
-                        Text("e.g. Raunak, VoiceFlow, Shopsense, Fynd, my-side-project")
+                        Text("e.g. Raunak, Verba, Shopsense, Fynd, my-side-project")
                             .font(.system(size: 13))
                             .foregroundColor(Theme.textTertiary)
                             .padding(.horizontal, 12)
@@ -1484,6 +3344,7 @@ struct MainDashboardView: View {
                             .foregroundColor(Theme.textSecondary)
                     }
                     .buttonStyle(.plain)
+                    .vfClickableCursor()
                     .help("Re-check permission status")
                 }
 
@@ -1566,6 +3427,7 @@ struct MainDashboardView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .vfClickableCursor()
             }
         }
     }
@@ -1611,6 +3473,7 @@ struct MainDashboardView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .vfClickableCursor()
             }
         }
     }
@@ -1648,11 +3511,13 @@ struct MainDashboardView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer()
-                    Toggle("", isOn: $realtimeStreaming)
-                        .labelsHidden()
-                        .onChange(of: realtimeStreaming) { newValue in
+                    VFSwitch(isOn: Binding(
+                        get: { realtimeStreaming },
+                        set: { newValue in
+                            realtimeStreaming = newValue
                             UserDefaults.standard.set(newValue, forKey: "realtime_streaming_enabled")
                         }
+                    ))
                 }
                 if realtimeStreaming {
                     Text("Requires OpenAI provider and a valid API key. Falls back to the batch upload if the WebSocket drops — you'll never miss a recording because of a bad network.")
@@ -1724,6 +3589,7 @@ struct MainDashboardView: View {
             )
         }
         .buttonStyle(.plain)
+        .vfClickableCursor()
         .help(style.subtitle)
     }
 
@@ -1923,6 +3789,7 @@ struct MainDashboardView: View {
                     }
                     .disabled(localDetector.isDetecting)
                     .buttonStyle(.bordered)
+                    .vfClickableCursor()
                     .controlSize(.small)
 
                     if localDetector.models.isEmpty {
@@ -1996,9 +3863,9 @@ struct MainDashboardView: View {
         case .verbatim:
             return "Raw transcript — no transformation. Dictation injects as-is; Rewrite still runs the polish model for cleaner phrasing. The Language picker controls Whisper's language hint in this mode."
         case .clean:
-            return "Output is always English. Speak any language (Hindi, Marathi, English) — it gets translated. Works on both Groq (free) and OpenAI."
+            return "Legacy English mode. New UI maps this behavior to Translate."
         case .cleanHinglish:
-            return "Romanized — any language written in English letters. Hindi: \u{201C}mera naam Raunak hai\u{201D}. Marathi: \u{201C}me tula bhetnar\u{201D}. No translation — the meaning stays in your language, just in Latin script. Works on Groq (free) and OpenAI."
+            return "English output writes any language in English letters. Hindi: \u{201C}mera naam Raunak hai\u{201D}. Marathi: \u{201C}me tula bhetnar\u{201D}. No translation."
         case .translateEnglish:
             return "Translates any spoken language to natural English."
         }
@@ -2007,9 +3874,10 @@ struct MainDashboardView: View {
     private var footerActions: some View {
         HStack {
             Button(action: onQuit) {
-                Label("Quit VoiceFlow", systemImage: "power")
+                Label("Quit Verba", systemImage: "power")
             }
             .buttonStyle(.plain)
+            .vfClickableCursor()
             .foregroundColor(.red)
             Spacer()
         }
@@ -2069,6 +3937,7 @@ struct MainDashboardView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .vfClickableCursor()
             }
             .onChange(of: text.wrappedValue) { _ in
                 // Autosave on every keystroke — the Save button is a visual
@@ -2093,6 +3962,7 @@ struct MainDashboardView: View {
             if !state.isGranted {
                 Button("Open Settings", action: fix)
                     .buttonStyle(.link)
+                    .vfClickableCursor()
             }
         }
         .font(.subheadline)
@@ -2128,10 +3998,24 @@ enum DashboardStats {
     /// correct. Honest stat, not a vanity metric.
     static func totalWords(_ store: RunStore) -> Int {
         store.summaries.reduce(0) { acc, s in
-            acc + s.previewText
-                .split(whereSeparator: { $0.isWhitespace })
-                .count
+            acc + wordCount(s)
         }
+    }
+
+    static func wordsPerMinuteText(_ store: RunStore) -> String {
+        let successfulRuns = store.summaries.filter { $0.status == .success && $0.durationSeconds > 0 }
+        let seconds = successfulRuns.reduce(0.0) { $0 + $1.durationSeconds }
+        guard seconds > 0 else { return "—" }
+        let words = successfulRuns.reduce(0) { $0 + wordCount($1) }
+        guard words > 0 else { return "—" }
+        return "\(Int((Double(words) / seconds * 60).rounded()))"
+    }
+
+    private static func wordCount(_ summary: RunSummary) -> Int {
+        if let cached = summary.wordCount { return cached }
+        return summary.previewText
+            .split(whereSeparator: { $0.isWhitespace })
+            .count
     }
 
     /// Current daily streak — consecutive calendar days with at least one
@@ -2293,27 +4177,16 @@ struct MemoryProviderPicker: View {
     }
 
     private var fetchCLIsButton: some View {
-        Button {
+        VFButton(
+            title: router.isFetchingCLIs ? "Fetching" : "Fetch AI CLIs",
+            icon: "terminal",
+            style: .secondary,
+            isCompact: true,
+            isLoading: router.isFetchingCLIs,
+            isDisabled: router.isFetchingCLIs
+        ) {
             Task { await router.fetchLocalCLIs() }
-        } label: {
-            HStack(spacing: 6) {
-                if router.isFetchingCLIs {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: "terminal")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                Text(router.isFetchingCLIs ? "Fetching..." : "Fetch AI CLIs")
-                    .font(.system(size: 10, weight: .bold))
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .foregroundColor(Theme.textPrimary)
-            .background(Capsule().fill(Theme.surfaceElevated))
-            .overlay(Capsule().strokeBorder(Theme.divider, lineWidth: 1))
         }
-        .buttonStyle(.plain)
-        .disabled(router.isFetchingCLIs)
         .help("Scan for Claude Code, Codex, and Gemini CLI binaries")
     }
 
@@ -2338,6 +4211,7 @@ struct MemoryProviderPicker: View {
                         .overlay(Capsule().strokeBorder(Theme.divider, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .vfClickableCursor()
                 .help("Probe \(cli.displayName) auth")
                 .disabled(!isDetected)
             }
@@ -2380,7 +4254,7 @@ struct MemoryProviderPicker: View {
                 ZStack {
                     Circle()
                         .strokeBorder(
-                            isSelected ? Theme.accent : Theme.divider,
+                            isSelected ? Theme.interactive : Theme.divider,
                             lineWidth: isSelected ? 5 : 1
                         )
                         .frame(width: 14, height: 14)
@@ -2406,15 +4280,16 @@ struct MemoryProviderPicker: View {
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isSelected ? Theme.accent.opacity(0.07) : Theme.surfaceElevated.opacity(0.3))
+                    .fill(isSelected ? Theme.interactiveSoft : Theme.surfaceElevated.opacity(0.3))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(isSelected ? Theme.accent.opacity(0.6) : Theme.divider, lineWidth: 1)
+                    .strokeBorder(isSelected ? Theme.interactive.opacity(0.45) : Theme.divider, lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .vfClickableCursor()
     }
 
     // MARK: Status badges
@@ -2477,9 +4352,9 @@ struct MemoryProviderPicker: View {
 struct HomeTimelineRow: View {
     let summary: RunSummary
     let runStore: RunStore
+    let onDelete: () -> Void
 
     @State private var isHovering = false
-    @State private var showDeleteConfirm = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -2516,12 +4391,6 @@ struct HomeTimelineRow: View {
         .onHover { hovering in
             isHovering = hovering
         }
-        .alert("Delete this transcript?", isPresented: $showDeleteConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                runStore.deleteRun(id: summary.id)
-            }
-        }
     }
 
     // MARK: Actions
@@ -2537,45 +4406,46 @@ struct HomeTimelineRow: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .vfClickableCursor()
         .help("Copy transcript")
     }
 
     private var ellipsisMenu: some View {
-        Menu {
-            Button {
+        VFActionMenu(
+            actions: transcriptActions,
+            iconColor: Theme.textSecondary,
+            buttonSize: 22
+        )
+    }
+
+    private var transcriptActions: [VFActionMenuAction] {
+        [
+            VFActionMenuAction(
+                icon: "arrow.clockwise",
+                label: "Retry transcript",
+                isDisabled: summary.status == .failed
+            ) {
                 NotificationCenter.default.post(
                     name: Notification.Name("VoiceFlow.RetryRun"),
                     object: nil,
                     userInfo: ["runID": summary.id]
                 )
-            } label: {
-                Label("Retry transcript", systemImage: "arrow.clockwise")
-            }
-            .disabled(summary.status == .failed)
-
-            Button {
+            },
+            VFActionMenuAction(
+                icon: "arrow.down.circle",
+                label: "Download audio"
+            ) {
                 downloadAudio()
-            } label: {
-                Label("Download audio", systemImage: "arrow.down.circle")
+            },
+            .divider(),
+            VFActionMenuAction(
+                icon: "trash",
+                label: "Delete transcript",
+                isDestructive: true
+            ) {
+                onDelete()
             }
-
-            Divider()
-
-            Button(role: .destructive) {
-                showDeleteConfirm = true
-            } label: {
-                Label("Delete transcript", systemImage: "trash")
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(Theme.textSecondary)
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
+        ]
     }
 
     // MARK: Action implementations
@@ -2599,7 +4469,7 @@ struct HomeTimelineRow: View {
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let stem = "VoiceFlow_\(formatter.string(from: summary.createdAt))"
+        let stem = "Verba_\(formatter.string(from: summary.createdAt))"
         var dest = downloads.appendingPathComponent("\(stem).wav")
         var counter = 2
         while FileManager.default.fileExists(atPath: dest.path) {
@@ -2666,7 +4536,7 @@ struct ThemeTogglePill: View {
         HStack(spacing: 0) {
             ForEach(ThemeMode.allCases, id: \.self) { mode in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(.easeOut(duration: 0.16)) {
                         manager.mode = mode
                     }
                 } label: {
@@ -2674,7 +4544,7 @@ struct ThemeTogglePill: View {
                         Image(systemName: mode.icon)
                             .font(.system(size: 10, weight: .semibold))
                         Text(mode == .light ? "Light" : "Dark")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.system(size: 11, weight: manager.mode == mode ? .semibold : .medium))
                     }
                     .foregroundColor(manager.mode == mode ? Theme.textPrimary : Theme.textTertiary)
                     .padding(.horizontal, 10)
@@ -2682,16 +4552,17 @@ struct ThemeTogglePill: View {
                     .frame(maxWidth: .infinity)
                     .background(
                         RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(manager.mode == mode ? Theme.surfaceElevated : Color.clear)
+                            .fill(manager.mode == mode ? Theme.segmentedToggleActiveFill : Color.clear)
                     )
                 }
                 .buttonStyle(.plain)
+                .vfClickableCursor()
             }
         }
         .padding(3)
         .background(
             RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                .fill(Theme.divider)
+                .fill(Theme.segmentedToggleTrackFill)
         )
     }
 }
@@ -2907,156 +4778,472 @@ extension View {
     }
 }
 
-// MARK: - PrismGradientHeader
+// MARK: - Profile cards
 
-/// Animated multi-color gradient surface — drop-in replacement for any
-/// solid header rectangle. Approximates componentry.fun's "Dither Prism"
-/// without a Metal shader: an `AngularGradient` rotated continuously
-/// over time produces a slow-shifting prismatic field, and a soft
-/// sparkles glyph layered on top reads as the focal point.
-///
-/// Pure SwiftUI — works on macOS 13. Same TimelineView budget rules as
-/// BorderBeam apply: paused when the window is occluded.
-struct PrismGradientHeader: View {
-    var height: CGFloat = 80
-    var cornerRadius: CGFloat = 10
+private enum VoiceFlowOrangeMeshPalette {
+    static let hot = Color(red: 1.000, green: 0.231, blue: 0.020)
+    static let ember = Color(red: 1.000, green: 0.412, blue: 0.063)
+    static let gold = Color(red: 1.000, green: 0.690, blue: 0.196)
+    static let rose = Color(red: 1.000, green: 0.318, blue: 0.208)
+    static let creamMark = Color(red: 1.000, green: 0.965, blue: 0.895)
+}
 
-    private let prismColors: [Color] = [
-        Color(red: 0.55, green: 0.30, blue: 0.95),  // violet
-        Color(red: 0.95, green: 0.40, blue: 0.65),  // pink
-        Color(red: 1.00, green: 0.55, blue: 0.10),  // orange (Theme.accent)
-        Color(red: 0.30, green: 0.80, blue: 0.95),  // cyan
-        Color(red: 0.55, green: 0.30, blue: 0.95)   // violet (loop)
-    ]
+private struct VoiceFlowOrangeMeshHeader: View {
+    var height: CGFloat
+    var watermarkOpacity: Double = 0.22
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate
-            // 12s per full rotation — slow enough to feel ambient, not
-            // disco. The eye notices the colors at the corners shifting
-            // without ever feeling pulled-at.
-            let angle = (t * 30).truncatingRemainder(dividingBy: 360)
+        ZStack(alignment: .trailing) {
+            LinearGradient(
+                colors: [
+                    VoiceFlowOrangeMeshPalette.hot,
+                    VoiceFlowOrangeMeshPalette.ember,
+                    Theme.accent
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
 
-            ZStack {
-                AngularGradient(
-                    gradient: Gradient(colors: prismColors),
-                    center: .center,
-                    angle: .degrees(angle)
-                )
-                // Soft white core in the center — gives the eye an anchor
-                // and "lifts" the colors so they don't feel muddy.
-                RadialGradient(
-                    colors: [Color.white.opacity(0.35), Color.clear],
-                    center: .center,
-                    startRadius: 0,
-                    endRadius: 50
-                )
-                // Sparkles glyph — system iconography for "premium".
-                Image(systemName: "sparkles")
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(0.2), radius: 6, y: 1)
+            RadialGradient(
+                colors: [
+                    VoiceFlowOrangeMeshPalette.gold.opacity(0.72),
+                    VoiceFlowOrangeMeshPalette.gold.opacity(0.14),
+                    Color.clear
+                ],
+                center: UnitPoint(x: 0.15, y: 1.0),
+                startRadius: 4,
+                endRadius: 170
+            )
+            .blendMode(.screen)
+
+            RadialGradient(
+                colors: [
+                    VoiceFlowOrangeMeshPalette.rose.opacity(0.70),
+                    VoiceFlowOrangeMeshPalette.rose.opacity(0.18),
+                    Color.clear
+                ],
+                center: UnitPoint(x: 0.90, y: 0.18),
+                startRadius: 8,
+                endRadius: 150
+            )
+            .blendMode(.screen)
+
+            VoiceFlowLogoBars(
+                color: VoiceFlowOrangeMeshPalette.creamMark.opacity(watermarkOpacity),
+                barWidth: 14,
+                maxHeight: 82,
+                spacing: 8
+            )
+            .rotationEffect(.degrees(-15))
+            .offset(x: 48, y: -4)
+        }
+        .frame(height: height)
+        .clipped()
+        .accessibilityHidden(true)
+    }
+}
+
+private struct VoiceProfileMeshHeader: View {
+    var height: CGFloat
+    var watermarkOpacity: Double = 0.18
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            LinearGradient(
+                colors: [
+                    Theme.surfaceElevated,
+                    Color(red: 0.955, green: 0.944, blue: 1.000),
+                    Color(red: 0.820, green: 0.775, blue: 1.000)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            RadialGradient(
+                colors: [
+                    Theme.interactive.opacity(0.20),
+                    Theme.interactive.opacity(0.06),
+                    Color.clear
+                ],
+                center: UnitPoint(x: 0.10, y: 0.92),
+                startRadius: 6,
+                endRadius: 160
+            )
+            .blendMode(.screen)
+
+            RadialGradient(
+                colors: [
+                    Color(red: 0.690, green: 0.590, blue: 1.000).opacity(0.30),
+                    Color(red: 0.690, green: 0.590, blue: 1.000).opacity(0.08),
+                    Color.clear
+                ],
+                center: UnitPoint(x: 0.86, y: 0.18),
+                startRadius: 6,
+                endRadius: 140
+            )
+            .blendMode(.screen)
+
+            VoiceFlowLogoBars(
+                color: Theme.interactive.opacity(watermarkOpacity),
+                barWidth: 14,
+                maxHeight: 82,
+                spacing: 8
+            )
+            .rotationEffect(.degrees(-15))
+            .offset(x: 48, y: -4)
+        }
+        .frame(height: height)
+        .clipped()
+        .accessibilityHidden(true)
+    }
+}
+
+private struct VoiceFlowLogoBars: View {
+    var color: Color
+    var barWidth: CGFloat
+    var maxHeight: CGFloat
+    var spacing: CGFloat
+
+    private let heights: [CGFloat] = [0.42, 0.74, 1.0, 0.66, 0.42]
+
+    var body: some View {
+        HStack(alignment: .center, spacing: spacing) {
+            ForEach(heights.indices, id: \.self) { index in
+                Capsule(style: .continuous)
+                    .fill(color)
+                    .frame(width: barWidth, height: maxHeight * heights[index])
             }
-            .frame(height: height)
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         }
     }
 }
 
-// MARK: - SidebarPremiumBlock
-
-/// Sidebar card that nudges users to upgrade to OpenAI for GPT-4 polish.
-/// Multilingual transcription already works on the free Groq tier, so
-/// this is purely about higher-quality post-processing, not gating.
-struct SidebarPremiumBlock: View {
-    @State private var isHovered = false
+private struct VoiceFlowProfileBadge: View {
+    var diameter: CGFloat = 52
 
     var body: some View {
-        Button {
-            NotificationCenter.default.post(
-                name: Notification.Name("VoiceFlow.SelectTab"),
-                object: nil,
-                userInfo: ["tab": "settings"]
+        ZStack {
+            Circle()
+                .fill(Theme.surfaceElevated)
+            Circle()
+                .strokeBorder(Theme.interactive.opacity(0.42), lineWidth: 3)
+
+            VFBrandLogo(size: diameter * 0.58, variant: .automatic, cornerRadius: diameter * 0.10)
+                .frame(width: diameter, height: diameter, alignment: .center)
+        }
+        .frame(width: diameter, height: diameter)
+        .shadow(color: Color.black.opacity(0.08), radius: 4, x: 0, y: 2)
+    }
+}
+
+private enum GitHubLogoAsset {
+    private static let resourceName = "github-6980894_640"
+
+    static let image: NSImage? = {
+        if let namedImage = NSImage(named: resourceName) {
+            return namedImage
+        }
+        guard let url = Bundle.main.url(forResource: resourceName, withExtension: "png") else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
+    }()
+}
+
+private enum GitHubBrandPalette {
+    static let ink = Color(red: 0.051, green: 0.067, blue: 0.090)
+    static let navy = Color(red: 0.020, green: 0.028, blue: 0.180)
+    static let midnight = Color(red: 0.025, green: 0.018, blue: 0.115)
+    static let violet = Color(red: 0.330, green: 0.255, blue: 0.810)
+    static let glow = Color(red: 0.690, green: 0.590, blue: 1.000)
+    static let mark = Color(red: 0.965, green: 0.965, blue: 0.980)
+}
+
+private struct GitHubBrandHeader: View {
+    var height: CGFloat
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            LinearGradient(
+                colors: [
+                    GitHubBrandPalette.ink,
+                    GitHubBrandPalette.navy,
+                    GitHubBrandPalette.midnight
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
             )
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                // Animated prism header — the "premium hero" of the card.
-                PrismGradientHeader(height: 76, cornerRadius: 8)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 4) {
-                        Text("Upgrade to GPT-4 Polish")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundColor(Theme.textPrimary)
-                        Spacer()
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(Theme.accent)
-                            .opacity(isHovered ? 1.0 : 0.6)
-                            .offset(x: isHovered ? 2 : 0)
-                            .animation(.easeOut(duration: 0.15), value: isHovered)
-                    }
+            RadialGradient(
+                colors: [
+                    GitHubBrandPalette.violet.opacity(0.88),
+                    GitHubBrandPalette.violet.opacity(0.22),
+                    Color.clear
+                ],
+                center: UnitPoint(x: 0.70, y: 1.06),
+                startRadius: 4,
+                endRadius: 170
+            )
+            .blendMode(.screen)
 
-                    Text("Higher quality post-processing")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.textPrimary.opacity(0.85))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+            RadialGradient(
+                colors: [
+                    GitHubBrandPalette.glow.opacity(0.46),
+                    GitHubBrandPalette.glow.opacity(0.12),
+                    Color.clear
+                ],
+                center: UnitPoint(x: 0.98, y: 0.18),
+                startRadius: 5,
+                endRadius: 110
+            )
+            .blendMode(.screen)
 
-                    Text("Add OpenAI key in Settings →")
-                        .font(.system(size: 10))
-                        .foregroundColor(Theme.textSecondary)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 2)
+            GitHubMarkShape()
+                .fill(GitHubBrandPalette.mark.opacity(0.16))
+                .frame(width: 112, height: 112)
+                .rotationEffect(.degrees(-12))
+                .offset(x: 40, y: 5)
+        }
+        .frame(height: height)
+        .clipped()
+        .accessibilityHidden(true)
+    }
+}
+
+private struct GitHubLogoBadge: View {
+    var diameter: CGFloat = 48
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Theme.surfaceElevated)
+            Circle()
+                .strokeBorder(GitHubBrandPalette.mark.opacity(0.84), lineWidth: 3)
+            if let githubLogo = GitHubLogoAsset.image {
+                Image(nsImage: githubLogo)
+                    .resizable()
+                    .renderingMode(.original)
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: diameter * 1.08, height: diameter * 1.08)
+            } else {
+                GitHubMarkShape()
+                    .fill(GitHubBrandPalette.ink)
+                    .padding(diameter * 0.20)
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Theme.accent.opacity(0.10),
-                                Theme.accent.opacity(0.04)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            )
+        }
+        .frame(width: diameter, height: diameter)
+        .shadow(color: Color.black.opacity(0.14), radius: 5, x: 0, y: 3)
+    }
+}
+
+private struct GitHubMarkShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 16
+        let xOffset = rect.midX - (8 * scale)
+        let yOffset = rect.midY - (8 * scale)
+
+        func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: xOffset + (x * scale), y: yOffset + (y * scale))
+        }
+
+        var path = Path()
+        path.move(to: point(8.0, 14.6))
+        path.addCurve(to: point(2.2, 8.3), control1: point(4.5, 14.6), control2: point(2.2, 11.6))
+        path.addCurve(to: point(4.0, 4.6), control1: point(2.2, 6.8), control2: point(2.9, 5.4))
+        path.addCurve(to: point(3.7, 2.0), control1: point(3.7, 3.3), control2: point(3.7, 2.5))
+        path.addCurve(to: point(6.0, 3.0), control1: point(4.4, 2.0), control2: point(5.4, 2.5))
+        path.addCurve(to: point(8.0, 2.8), control1: point(6.7, 2.9), control2: point(7.3, 2.8))
+        path.addCurve(to: point(10.0, 3.0), control1: point(8.7, 2.8), control2: point(9.3, 2.9))
+        path.addCurve(to: point(12.3, 2.0), control1: point(10.6, 2.5), control2: point(11.6, 2.0))
+        path.addCurve(to: point(12.0, 4.6), control1: point(12.3, 2.5), control2: point(12.3, 3.3))
+        path.addCurve(to: point(13.8, 8.3), control1: point(13.1, 5.4), control2: point(13.8, 6.8))
+        path.addCurve(to: point(10.2, 13.8), control1: point(13.8, 10.9), control2: point(12.3, 13.0))
+        path.addCurve(to: point(8.0, 14.6), control1: point(9.6, 14.2), control2: point(8.7, 14.6))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct HomeVoiceProfileCard: View {
+    let stats: ComputedStats
+    @ObservedObject private var classifier = UserTypeClassifier.shared
+    @State private var isHovered = false
+
+    let onOpenInsights: () -> Void
+
+    var body: some View {
+        Button(action: onOpenInsights) {
+            VStack(spacing: 0) {
+                VoiceProfileMeshHeader(height: 78, watermarkOpacity: 0.20)
+
+                ZStack(alignment: .topLeading) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top) {
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(Theme.textSecondary)
+                                .offset(x: isHovered ? 2 : 0, y: isHovered ? -2 : 0)
+                        }
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(profileTitle)
+                                .font(.vfCalloutMedium)
+                                .foregroundColor(Theme.textPrimary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                            Text(profileSubtitle)
+                                .font(.vfCaption)
+                                .foregroundColor(Theme.textSecondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        HStack(spacing: 8) {
+                            profileStat(value: wordsLabel, label: "words")
+                            profileStat(value: wpmLabel, label: "wpm")
+                            profileStat(value: styleLabel, label: "style")
+                        }
+
+                        if let signalLabel {
+                            HStack(spacing: 6) {
+                                Image(systemName: "sparkle")
+                                    .font(.system(size: 8, weight: .semibold))
+                                Text(signalLabel)
+                                    .font(.vfMicro)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
+                            }
+                            .foregroundColor(Theme.textPrimary)
+                            .padding(.horizontal, 8)
+                            .frame(height: 24)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Capsule(style: .continuous).fill(Theme.surface))
+                            .overlay(Capsule(style: .continuous).strokeBorder(Theme.divider, lineWidth: 1))
+                        }
+                    }
+                    .padding(14)
+                    .padding(.top, 24)
+
+                    VoiceFlowProfileBadge(diameter: 52)
+                        .offset(x: 14, y: -28)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background(Theme.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .overlay(
-                // Static accent border — replaces the traveling-beam
-                // animation. The prism header above already provides
-                // motion; a second moving element on the same card was
-                // visually noisy. One animation per card is the cap.
-                RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                    .strokeBorder(Theme.accent.opacity(0.30), lineWidth: 1)
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .strokeBorder(isHovered ? Theme.dividerStrong : Theme.divider, lineWidth: 1)
             )
+            .shadow(color: isHovered ? Theme.Shadow.card.color : Color.clear,
+                    radius: Theme.Shadow.card.radius,
+                    x: 0,
+                    y: Theme.Shadow.card.y)
         }
         .buttonStyle(.plain)
+        .vfClickableCursor()
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(.easeOut(duration: 0.14)) {
                 isHovered = hovering
             }
         }
-        .help("Add an OpenAI API key in Settings for GPT-4 post-processing quality.")
+        .help("Open the voice profile in Insights")
+        .accessibilityLabel("Open voice profile in Insights")
+    }
+
+    private var profileTitle: String {
+        if let classification = classifier.classification {
+            return "\(classification.role.displayLabel) voice"
+        }
+        if classifier.isClassifying {
+            return "Analyzing voice"
+        }
+        return "Voice profile not generated yet"
+    }
+
+    private var profileSubtitle: String {
+        if let classification = classifier.classification {
+            return classification.headline
+        }
+        if classifier.isClassifying {
+            return "Reading saved transcripts from your local run history."
+        }
+        let eligibility = classifier.eligibility()
+        if eligibility.isUnlocked {
+            return "Sync in Insights to generate your working style."
+        }
+        return "\(eligibility.qualifyingRuns) of \(eligibility.requiredRuns) qualifying dictations captured."
+    }
+
+    private var wordsLabel: String {
+        guard stats.totalWords > 0 else { return "—" }
+        if stats.totalWords >= 1_000 {
+            return String(format: "%.1fk", Double(stats.totalWords) / 1_000.0)
+        }
+        return stats.totalWords.formatted()
+    }
+
+    private var wpmLabel: String {
+        stats.averageWPM > 0 ? "\(stats.averageWPM)" : "—"
+    }
+
+    private var styleLabel: String {
+        if let classification = classifier.classification {
+            return classification.role.displayLabel
+        }
+        if classifier.isClassifying {
+            return "Syncing"
+        }
+        return "Pending"
+    }
+
+    private var signalLabel: String? {
+        if let signal = classifier.classification?.signals.first {
+            return signal
+        }
+        if classifier.isClassifying {
+            return "Analyzing saved transcripts"
+        }
+        let eligibility = classifier.eligibility()
+        if eligibility.isUnlocked {
+            return "Ready to generate in Insights"
+        }
+        let remaining = max(0, eligibility.requiredRuns - eligibility.qualifyingRuns)
+        return "\(remaining) more qualifying dictations needed"
+    }
+
+    private func profileStat(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.vfCalloutSemibold)
+                .foregroundColor(Theme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .monospacedDigit()
+            Text(label)
+                .font(.vfMicro)
+                .foregroundColor(Theme.textTertiary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 // MARK: - SidebarStarBlock
 
 /// Compact GitHub star prompt for the sidebar. Different design from
-/// the wide `StarRepoCard` — narrow column means we can't show avatars
-/// or stargazer rows. Distilled to the essentials: live star count +
-/// one-tap CTA. Whole block is itself the link target.
+/// the wide `StarRepoCard`. Narrow column gets a GitHub-branded profile
+/// treatment: dark identity header, live star count, and stargazer proof.
+/// Whole block is itself the link target.
 ///
 /// Why a separate component instead of resizing StarRepoCard: the wide
 /// card has horizontal HStacks and avatar rows that don't compose into
-/// a 180pt-wide column. Two intents → two components, both pulling from
+/// a 180pt-wide column. Two intents, two components, both pulling from
 /// the same `GitHubMetadataCache.shared` so the data stays coherent.
 struct SidebarStarBlock: View {
     @ObservedObject private var github = GitHubMetadataCache.shared
+    @State private var isHovered = false
 
     private let openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
@@ -3064,51 +5251,98 @@ struct SidebarStarBlock: View {
         Button {
             openURL(GitHubMetadataCache.repoHTMLURL)
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.accent)
-                    Text(starCountLabel)
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundColor(Theme.textPrimary)
-                    Spacer()
+            VStack(spacing: 0) {
+                GitHubBrandHeader(height: 68)
+
+                ZStack(alignment: .topLeading) {
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack(alignment: .top, spacing: Theme.Space.sm) {
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(Theme.textSecondary)
+                                .offset(x: isHovered ? 2 : 0, y: isHovered ? -2 : 0)
+                        }
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 7) {
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(Theme.textPrimary)
+                                Text(AppBrand.name)
+                                    .font(.vfCalloutSemibold)
+                                    .foregroundColor(Theme.textPrimary)
+                            }
+                            Text("Open source dictation app")
+                                .font(.vfCaption)
+                                .foregroundColor(Theme.textSecondary)
+                                .lineLimit(1)
+                        }
+
+                        Text("Help more builders discover the local-first tool.")
+                            .font(.vfCaption)
+                            .foregroundColor(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        HStack(alignment: .center, spacing: Theme.Space.sm) {
+                            starCountBadge
+                            Spacer(minLength: Theme.Space.sm)
+                            if !github.recentStargazers.isEmpty {
+                                stargazerAvatarRow
+                            }
+                        }
+
+                        Text("\(GitHubMetadataCache.repoOwner)/\(GitHubMetadataCache.repoName)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(Theme.textTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .padding(12)
+                    .padding(.top, 24)
+
+                    GitHubLogoBadge(diameter: 48)
+                        .offset(x: 12, y: -26)
                 }
-
-                Text("Star on GitHub")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Theme.textPrimary)
-
-                // Recent stargazer avatars — overlapping circles (negative
-                // HStack spacing). Capped at 4 because the sidebar is
-                // narrow; "+N" badge follows when there are more.
-                if !github.recentStargazers.isEmpty {
-                    stargazerAvatarRow
-                }
-
-                Text("\(GitHubMetadataCache.repoOwner)/\(GitHubMetadataCache.repoName)")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(Theme.textTertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
             }
-            .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                    .fill(Theme.surface)
-            )
+            .background(Theme.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                    .strokeBorder(Theme.divider, lineWidth: 1)
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .strokeBorder(isHovered ? Theme.dividerStrong : Theme.divider, lineWidth: 1)
             )
+            .shadow(color: isHovered ? Theme.Shadow.card.color : Color.clear,
+                    radius: Theme.Shadow.card.radius,
+                    x: 0,
+                    y: Theme.Shadow.card.y)
         }
         .buttonStyle(.plain)
-        .help("Open the VoiceFlow repo on GitHub — a star helps this project grow.")
+        .vfClickableCursor()
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.14)) {
+                isHovered = hovering
+            }
+        }
+        .help("Open the project repo on GitHub, a star helps this project grow.")
         .task { github.refreshIfStale() }
     }
 
-    /// Overlapping avatar row — visual proof that real people are starring
+    private var starCountBadge: some View {
+        HStack(spacing: Theme.Space.xs) {
+            Image(systemName: "star.fill")
+                .font(.system(size: 10, weight: .semibold))
+            Text("\(starCountLabel) stars")
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+        }
+        .foregroundColor(Theme.textPrimary)
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background(Capsule(style: .continuous).fill(Theme.surface))
+        .overlay(Capsule(style: .continuous).strokeBorder(Theme.divider, lineWidth: 1))
+    }
+
+    /// Overlapping avatar row, visual proof that real people are starring
     /// the project. Each avatar is bordered with the surface color so
     /// the negative-spacing overlap reads cleanly.
     private var stargazerAvatarRow: some View {
@@ -3127,7 +5361,7 @@ struct SidebarStarBlock: View {
                 .frame(width: 18, height: 18)
                 .clipShape(Circle())
                 .overlay(
-                    Circle().stroke(Theme.surface, lineWidth: 1.5)
+                    Circle().stroke(Theme.surfaceElevated, lineWidth: 1.5)
                 )
                 .help(star.user.login)
             }
@@ -3153,203 +5387,17 @@ struct SidebarStarBlock: View {
 
 // MARK: - ScratchpadView
 
-/// In-app dictation target. Solves the "where do I safely practice /
-/// test dictation without it bleeding into Slack" problem that every
-/// first-time user hits.
-///
-/// Implementation: rather than plumb a new injection path through
-/// AppDelegate (would require touching the hot path), we observe the
-/// RunStore and append new transcripts to the local text buffer as
-/// they land. Pub-sub via @Published — zero coupling to the recorder.
-///
-/// Tradeoff: the transcript ALSO gets injected wherever the user's
-/// external cursor is (standard VoiceFlow behavior). For Scratchpad
-/// use, the user should leave the app focused (which also means the
-/// TextInjector suppresses external injection — clean outcome). If
-/// they alt-tab mid-dictation, they'll get the transcript in both
-/// places, which is harmless.
+/// Compatibility wrapper for the former Scratchpad tab. The route remains
+/// `.scratchpad` so notifications and saved sidebar state keep working, while
+/// the user-facing surface is now the persisted rich-text Notes workspace.
 struct ScratchpadView: View {
     @ObservedObject var runStore: RunStore
-
-    @State private var text: String = ""
-    @State private var lastSeenRunId: UUID?
+    let onOpenFloatingNotes: () -> Void
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                header
-
-                // Instruction card — only shown when scratchpad is empty.
-                if text.isEmpty {
-                    emptyStateCard
-                }
-
-                editor
-            }
-            .padding(Theme.Space.xl)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .onReceive(runStore.$summaries) { summaries in
-            // Append any new successful transcript to the scratchpad.
-            // Seed on first render with the newest known id so we don't
-            // replay history into the editor.
-            guard let latest = summaries.first else { return }
-            if lastSeenRunId == nil {
-                lastSeenRunId = latest.id
-                return
-            }
-            if latest.id != lastSeenRunId {
-                let incoming = latest.previewText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if latest.status == .success, !incoming.isEmpty {
-                    if text.isEmpty {
-                        text = incoming
-                    } else {
-                        text += "\n\n" + incoming
-                    }
-                }
-                lastSeenRunId = latest.id
-            }
-        }
-    }
-
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("Scratchpad")
-                .font(.system(size: 26, weight: .semibold, design: .serif))
-                .foregroundColor(Theme.textPrimary)
-            Spacer()
-            if !text.isEmpty {
-                Button {
-                    text = ""
-                } label: {
-                    Text("Clear")
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(Theme.textSecondary)
-            }
-        }
-    }
-
-    private var emptyStateCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("Hold")
-                    .font(.system(size: 16, weight: .semibold, design: .serif))
-                    .foregroundColor(Theme.textOnDark)
-                HotkeyBadge(label: "fn")
-                Text("and speak — your words land here.")
-                    .font(.system(size: 16, weight: .semibold, design: .serif))
-                    .foregroundColor(Theme.textOnDark)
-            }
-            Text("A safe place to practice dictation without it bleeding into Slack or your editor. Transcripts auto-append as you dictate.")
-                .font(.system(size: 12))
-                .foregroundColor(Theme.textOnDark.opacity(0.7))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(Theme.Space.lg)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .themedHeroCard()
-    }
-
-    private var editor: some View {
-        // ScratchpadTextView (NSViewRepresentable wrapping NSTextView) lets
-        // us pin the textContainerInset to a known value, which we then
-        // match exactly with the placeholder's padding. SwiftUI's plain
-        // TextEditor doesn't expose textContainerInset, so the cursor
-        // position depends on host OS defaults that we can't anchor to.
-        ZStack(alignment: .topLeading) {
-            ScratchpadTextView(text: $text)
-
-            if text.isEmpty {
-                // These padding values are the ONLY source of truth for
-                // the placeholder offset. Whatever we set here, the
-                // ScratchpadTextView's textContainerInset must match —
-                // see ScratchpadTextView.placeholderInset.
-                Text("Start dictating with fn from anywhere — or just type here. Your scratchpad auto-fills as transcripts come in.")
-                    .font(.system(size: 14))
-                    .foregroundColor(Theme.textTertiary)
-                    .padding(.leading, ScratchpadTextView.placeholderInset.width)
-                    .padding(.top, ScratchpadTextView.placeholderInset.height)
-                    .allowsHitTesting(false)
-            }
-        }
-        .frame(minHeight: 300)
-        .padding(Theme.Space.md)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                .fill(Theme.surface)
+        NotesWorkspaceView(
+            surface: .dashboard,
+            onOpenFloatingNotes: onOpenFloatingNotes
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                .strokeBorder(Theme.divider, lineWidth: 1)
-        )
-    }
-}
-
-// MARK: - ScratchpadTextView
-
-/// NSTextView wrapper with a deterministic text origin. Exists because
-/// SwiftUI's `TextEditor` has no API to set `textContainerInset`, which
-/// means the cursor's draw position varies across macOS versions and we
-/// can never make a placeholder line up with it via guesswork.
-///
-/// Single source of truth for the inset: `placeholderInset`. The Scratchpad
-/// view reads this and uses it as `.padding(.leading: ..., .top: ...)` on
-/// the placeholder text, guaranteeing pixel alignment with the cursor.
-struct ScratchpadTextView: NSViewRepresentable {
-    @Binding var text: String
-
-    /// Single source of truth for text origin. Cursor will draw at exactly
-    /// this offset from the editor's frame edge; placeholder uses the same
-    /// values via SwiftUI .padding so they sit on top of each other.
-    static let placeholderInset = CGSize(width: 8, height: 8)
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
-        let textView = scrollView.documentView as! NSTextView
-        textView.font = NSFont.systemFont(ofSize: 14)
-        textView.textContainerInset = Self.placeholderInset
-        // Line fragment padding is the OTHER hidden-but-real source of
-        // horizontal offset. Zeroing it means the only horizontal offset
-        // is textContainerInset.width — exactly what the placeholder
-        // matches via .padding(.leading:).
-        textView.textContainer?.lineFragmentPadding = 0
-        textView.backgroundColor = .clear
-        textView.drawsBackground = false
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.allowsUndo = true
-        textView.isRichText = false
-        textView.usesFontPanel = false
-        textView.usesRuler = false
-        textView.delegate = context.coordinator
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-        scrollView.hasHorizontalScroller = false
-        scrollView.hasVerticalScroller = true
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-        // Only update if it actually changed — otherwise we clobber the
-        // cursor position and selection on every state-change of any
-        // ancestor view.
-        if textView.string != text {
-            textView.string = text
-        }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: ScratchpadTextView
-        init(_ parent: ScratchpadTextView) { self.parent = parent }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
-        }
     }
 }

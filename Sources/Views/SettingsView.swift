@@ -51,13 +51,14 @@ struct SettingsView: View {
 
     let outputModes = [
         (TranscriptOutputStyle.verbatim.rawValue, "Original"),
-        (TranscriptOutputStyle.clean.rawValue, "English"),
-        (TranscriptOutputStyle.cleanHinglish.rawValue, "Romanized")
+        (TranscriptOutputStyle.cleanHinglish.rawValue, "English output"),
+        (TranscriptOutputStyle.translateEnglish.rawValue, "Translate")
     ]
 
     let processingModes = [
-        (TranscriptProcessingMode.dictation.rawValue, "Dictation"),
-        (TranscriptProcessingMode.rewrite.rawValue, "Rewrite")
+        (TranscriptProcessingMode.dictation.rawValue, "Polish"),
+        (TranscriptProcessingMode.rewrite.rawValue, "Rewrite"),
+        (TranscriptProcessingMode.promptEngineer.rawValue, "Prompt")
     ]
     
     var body: some View {
@@ -132,7 +133,7 @@ struct SettingsView: View {
             
             Section("About") {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("VoiceFlow v1.0.0")
+                    Text("\(AppBrand.name) v1.0.0")
                         .font(.headline)
                     Text("Voice typing app powered by OpenAI Whisper")
                         .font(.caption)
@@ -209,16 +210,17 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
 
-                Text("Dictation keeps spoken phrasing. Rewrite converts to cleaner final intent text.")
+                Text("Choose one default transform: Polish, Rewrite, or Prompt Engineer.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
 
             Section("Run Log") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Toggle("Keep run history", isOn: $runLogEnabled)
-                    Toggle("Cap at 20 runs", isOn: $runLogCapped)
+                    VFToggle(label: "Keep run history", isOn: $runLogEnabled)
+                    VFToggle(label: "Cap at 20 runs", isOn: $runLogCapped)
                         .disabled(!runLogEnabled)
+                        .opacity(runLogEnabled ? 1 : 0.45)
                     Text(runLogCaptionText)
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -347,8 +349,9 @@ struct SettingsView: View {
         groqApiKey = UserDefaults.standard.string(forKey: "groq_api_key") ?? ""
         provider = UserDefaults.standard.string(forKey: "transcription_provider") ?? TranscriptionProvider.openai.rawValue
         selectedLanguage = UserDefaults.standard.string(forKey: "language") ?? "hi"
-        outputMode = UserDefaults.standard.string(forKey: "output_mode") ?? TranscriptOutputStyle.cleanHinglish.rawValue
-        processingMode = UserDefaults.standard.string(forKey: "processing_mode") ?? TranscriptProcessingMode.rewrite.rawValue
+        let storedOutputMode = UserDefaults.standard.string(forKey: "output_mode") ?? TranscriptOutputStyle.cleanHinglish.rawValue
+        outputMode = storedOutputMode == TranscriptOutputStyle.clean.rawValue ? TranscriptOutputStyle.translateEnglish.rawValue : storedOutputMode
+        processingMode = UserDefaults.standard.string(forKey: "processing_mode") ?? TranscriptProcessingMode.dictation.rawValue
         let storedPolishBackend = UserDefaults.standard.string(forKey: PolishBackend.userDefaultsKey) ?? PolishBackend.defaultId
         polishBackendId = PolishBackend.legacyGroqModelIds.contains(storedPolishBackend)
             ? PolishBackend.defaultIdGroq
@@ -416,26 +419,16 @@ struct SettingsView: View {
 
 // MARK: - Onboarding Wizard
 
-/// Three-step onboarding flow. Isolated from the main dashboard —
-/// first-run only (or user-initiated re-run from Settings → Setup).
-///
-/// Steps:
-///   1. Welcome       — what VoiceFlow does, in 15 seconds
-///   2. Permissions   — mic + accessibility + input monitoring, with
-///                      guided fallbacks for when TCC auto-prompt no-ops
-///   3. Test          — hold-fn demo with live transcript feedback
-///
-/// Why no API Key step anymore: the embedded Groq beta key handles
-/// transcription out of the box. Users who want Hinglish or higher polish
-/// quality can add an OpenAI key later from Settings → Provider, and the
-/// upgrade pitch surfaces itself there. Onboarding stays under a minute.
+/// Four-step onboarding flow. First value is a real dictation test, not a
+/// separate tutorial mode.
 enum OnboardingStep: Int, CaseIterable {
-    case welcome, permissions, test
+    case features, permissions, preferences, test
 
     var title: String {
         switch self {
-        case .welcome:     return "Welcome"
+        case .features:    return "Features"
         case .permissions: return "Permissions"
+        case .preferences: return "Preferences"
         case .test:        return "Test"
         }
     }
@@ -445,35 +438,33 @@ enum OnboardingStep: Int, CaseIterable {
 final class OnboardingCoordinator: ObservableObject {
     @Published var currentStep: OnboardingStep
 
-    init(initialStep: OnboardingStep = .welcome) {
+    init(initialStep: OnboardingStep = .features) {
         self.currentStep = initialStep
     }
 
     func advance() {
         let next = OnboardingStep(rawValue: currentStep.rawValue + 1)
         if let next {
-            withAnimation(.easeInOut(duration: 0.25)) { currentStep = next }
+            withAnimation(.easeInOut(duration: 0.22)) { currentStep = next }
         }
     }
 
     func back() {
         let prev = OnboardingStep(rawValue: currentStep.rawValue - 1)
         if let prev {
-            withAnimation(.easeInOut(duration: 0.25)) { currentStep = prev }
+            withAnimation(.easeInOut(duration: 0.22)) { currentStep = prev }
         }
     }
 
-    var isFirstStep: Bool { currentStep == .welcome }
+    var isFirstStep: Bool { currentStep == .features }
     var isLastStep:  Bool { currentStep == .test }
 }
 
 struct OnboardingView: View {
+    static let windowSize = NSSize(width: 780, height: 680)
+
     @ObservedObject var permissionService: PermissionService
-    /// Deep-link entry point. Default `.welcome` for the standard
-    /// first-run flow; the chip's permissions-warning click sets this
-    /// to `.permissions` so the user lands directly on the screen
-    /// they need.
-    var initialStep: OnboardingStep = .welcome
+    var initialStep: OnboardingStep = .features
     let onOpenSettings: () -> Void
     let onDone: () -> Void
 
@@ -482,7 +473,7 @@ struct OnboardingView: View {
 
     init(
         permissionService: PermissionService,
-        initialStep: OnboardingStep = .welcome,
+        initialStep: OnboardingStep = .features,
         onOpenSettings: @escaping () -> Void,
         onDone: @escaping () -> Void
     ) {
@@ -490,175 +481,232 @@ struct OnboardingView: View {
         self.initialStep = initialStep
         self.onOpenSettings = onOpenSettings
         self.onDone = onDone
-        // Inject the initial step into the coordinator. @StateObject's
-        // wrappedValue ensures this only runs on first init.
         _coordinator = StateObject(wrappedValue: OnboardingCoordinator(initialStep: initialStep))
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            progressBar
-            Divider().background(Theme.divider)
+            stepContent
+                .padding(.horizontal, Theme.Layout.contentHPad)
+                .padding(.top, Theme.Layout.contentVPad)
+                .padding(.bottom, Theme.Space.lg)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
-            ScrollView {
-                Group {
-                    switch coordinator.currentStep {
-                    case .welcome:
-                        OnboardingWelcomeStep()
-                    case .permissions:
-                        OnboardingPermissionsStep(permissionService: permissionService)
-                    case .test:
-                        OnboardingTestStep(runStore: runStore)
-                    }
-                }
-                .padding(Theme.Space.xl)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            Divider().background(Theme.divider)
+            VFDivider(inset: 0)
             navBar
         }
-        .frame(width: 600, height: 640)
+        .frame(width: Self.windowSize.width, height: Self.windowSize.height)
         .background(Theme.canvas)
-        // Onboarding inherits the user's theme choice. ThemeManager
-        // is a shared singleton so its mode is consistent across the
-        // main window and any standalone wizards.
         .preferredColorScheme(ThemeManager.shared.colorScheme)
-        .tint(Theme.accent)
+        .tint(Theme.textPrimary)
         .onAppear {
             permissionService.refreshStatus()
         }
     }
 
-    // MARK: Progress indicator
-
-    private var progressBar: some View {
-        HStack(spacing: 6) {
-            ForEach(OnboardingStep.allCases, id: \.self) { step in
-                Capsule()
-                    .fill(step.rawValue <= coordinator.currentStep.rawValue
-                          ? Theme.accent
-                          : Theme.divider)
-                    .frame(height: 3)
-            }
+    @ViewBuilder
+    private var stepContent: some View {
+        switch coordinator.currentStep {
+        case .features:
+            OnboardingFeaturesStep()
+        case .permissions:
+            OnboardingPermissionsStep(permissionService: permissionService)
+        case .preferences:
+            OnboardingPreferencesStep()
+        case .test:
+            OnboardingTestStep(runStore: runStore)
         }
-        .padding(.horizontal, Theme.Space.xl)
-        .padding(.top, Theme.Space.lg)
-        .padding(.bottom, Theme.Space.md)
     }
 
-    // MARK: Nav bar (Back / Skip / Next / Finish)
-
     private var navBar: some View {
-        HStack(spacing: Theme.Space.md) {
-            // Back — hidden on first step so users don't hit dead-end
+        HStack(spacing: Theme.Space.sm) {
             if !coordinator.isFirstStep {
-                Button("Back") { coordinator.back() }
-                    .buttonStyle(.plain)
-                    .foregroundColor(Theme.textSecondary)
-                    .font(.system(size: 13, weight: .medium))
+                VFButton(
+                    title: "Back",
+                    icon: "chevron.left",
+                    style: .ghost,
+                    isCompact: true
+                ) {
+                    coordinator.back()
+                }
             }
 
             Spacer()
+            compactStepper
+            Spacer()
 
-            // Skip — only on non-first, non-last steps. Lets power users
-            // bypass without being trapped.
             if !coordinator.isFirstStep && !coordinator.isLastStep {
-                Button("Skip") { coordinator.advance() }
-                    .buttonStyle(.plain)
-                    .foregroundColor(Theme.textTertiary)
-                    .font(.system(size: 12, weight: .medium))
+                VFButton(title: "Skip", style: .ghost, isCompact: true) {
+                    coordinator.advance()
+                }
             }
 
-            // Next / Finish
-            Button {
+            VFButton(
+                title: coordinator.isLastStep ? "Finish setup" : "Next",
+                icon: coordinator.isLastStep ? "checkmark" : "arrow.right",
+                style: .primary
+            ) {
                 if coordinator.isLastStep {
                     UserDefaults.standard.set(true, forKey: "has_completed_onboarding")
                     onDone()
                 } else {
                     coordinator.advance()
                 }
-            } label: {
-                Text(coordinator.isLastStep ? "Finish" : "Next")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                            .fill(Theme.textPrimary)
-                    )
             }
-            .buttonStyle(.plain)
             .keyboardShortcut(.defaultAction)
         }
-        .padding(.horizontal, Theme.Space.xl)
+        .padding(.horizontal, Theme.Layout.contentHPad)
         .padding(.vertical, Theme.Space.md)
+        .background(Theme.mainContent)
+    }
+
+    private var compactStepper: some View {
+        HStack(spacing: Theme.Space.sm) {
+            HStack(spacing: 4) {
+                ForEach(OnboardingStep.allCases, id: \.self) { step in
+                    Capsule()
+                        .fill(step.rawValue <= coordinator.currentStep.rawValue
+                              ? Theme.textPrimary
+                              : Theme.dividerStrong)
+                        .frame(width: step == coordinator.currentStep ? 18 : 8, height: 3)
+                }
+            }
+
+            Text("\(coordinator.currentStep.rawValue + 1)/\(OnboardingStep.allCases.count)")
+                .font(.vfCaption)
+                .foregroundColor(Theme.textSecondary)
+
+            Text(coordinator.currentStep.title)
+                .font(.vfCaption)
+                .foregroundColor(Theme.textPrimary)
+        }
+        .frame(minWidth: 156)
     }
 }
 
-// MARK: - Step 1: Welcome
+// MARK: - Shared onboarding components
 
-private struct OnboardingWelcomeStep: View {
+private struct OnboardingStepHeader: View {
+    let eyebrow: String
+    let title: String
+    let copy: String
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            // Hero title
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("Voice typing,")
-                    .font(.system(size: 32, weight: .semibold, design: .serif))
-                    .foregroundColor(Theme.textPrimary)
-                HotkeyBadge(label: "fn")
-                Text("fast.")
-                    .font(.system(size: 32, weight: .semibold, design: .serif))
-                    .foregroundColor(Theme.textPrimary)
-            }
-
-            Text("VoiceFlow turns speech into clean text, anywhere you can type on your Mac. Hold the fn key, speak, release — it just works.")
-                .font(.system(size: 15))
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text(eyebrow.uppercased())
+                .font(.vfCategoryLabel)
+                .foregroundColor(Theme.textTertiary)
+                .tracking(0.5)
+            Text(title)
+                .font(.vfSectionTitle)
+                .foregroundColor(Theme.textPrimary)
+            Text(copy)
+                .font(.vfCallout)
                 .foregroundColor(Theme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, Theme.Space.md)
+                .frame(maxWidth: 620, alignment: .leading)
+        }
+    }
+}
 
-            VStack(alignment: .leading, spacing: 14) {
-                bulletRow(
-                    icon: "lock.shield",
-                    title: "Stays on your Mac",
-                    copy: "Audio + transcripts never leave your device except to your own Whisper provider. No account, no cloud, no telemetry.")
-                bulletRow(
-                    icon: "globe",
-                    title: "Hindi, Marathi, English + more",
-                    copy: "Speak naturally in any language — the polish layer handles code-switching, transliterates to Latin script, and respects your spoken phrasing.")
-                bulletRow(
-                    icon: "bolt.fill",
-                    title: "Fn-hold, anywhere",
-                    copy: "Works system-wide: Slack, Mail, your editor, a terminal, a GitHub comment. One hotkey, one mental model.")
+private struct OnboardingSurface<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            content()
+        }
+        .background(Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .strokeBorder(Theme.divider, lineWidth: 1)
+        )
+    }
+}
+
+private struct OnboardingFeatureItem: Identifiable {
+    let id: String
+    let icon: String
+    let title: String
+    let copy: String
+}
+
+private struct OnboardingChoice: Identifiable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let badge: String?
+}
+
+// MARK: - Step 1: Features
+
+private struct OnboardingFeaturesStep: View {
+    private let columns = [
+        GridItem(.flexible(minimum: 0), spacing: 1),
+        GridItem(.flexible(minimum: 0), spacing: 1)
+    ]
+
+    private let features: [OnboardingFeatureItem] = [
+        .init(id: "dictate", icon: "keyboard", title: "Dictate anywhere", copy: "Hold fn, speak, release. Text lands in the app you were using."),
+        .init(id: "rewrite", icon: "sparkles", title: "Rewrite polish", copy: "Clean grammar, punctuation, structure, and filler words automatically."),
+        .init(id: "magic", icon: "wand.and.stars", title: "Magic Words", copy: "Speak short commands that transform, retry, or route your text."),
+        .init(id: "snippets", icon: "text.quote", title: "Snippets", copy: "Drop repeated replies, templates, and phrases without typing them again."),
+        .init(id: "vocabulary", icon: "book.closed", title: "Custom vocabulary", copy: "Teach names, brands, and technical words so they survive transcription."),
+        .init(id: "runlog", icon: "clock.arrow.circlepath", title: "Run Log", copy: "Recover previous dictations and see what happened during each run."),
+        .init(id: "memory", icon: "brain.head.profile", title: "Memory", copy: "Use saved context to make repeated writing patterns feel consistent."),
+        .init(id: "insights", icon: "chart.bar", title: "Insights", copy: "Track words, pace, and usage so the tool improves with your habits.")
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            OnboardingStepHeader(
+                eyebrow: "Page 1",
+                title: "Everything Verba gives you.",
+                copy: "This is the product surface you are setting up. The next pages only collect the pieces required to make these features work on macOS."
+            )
+
+            OnboardingSurface {
+                LazyVGrid(columns: columns, spacing: 1) {
+                    ForEach(features) { feature in
+                        featureCell(feature)
+                    }
+                }
+                .background(Theme.divider)
             }
-            .padding(Theme.Space.lg)
-            .themedCard()
 
-            Text("Next up: a quick 3-step setup. Takes ~2 minutes.")
-                .font(.system(size: 12))
-                .foregroundColor(Theme.textTertiary)
-                .padding(.top, Theme.Space.sm)
+            HStack(spacing: Theme.Space.sm) {
+                HotkeyBadge(label: "fn")
+                Text("is the default trigger. You can change it later in Settings.")
+                    .font(.vfCaption)
+                    .foregroundColor(Theme.textTertiary)
+            }
         }
     }
 
-    private func bulletRow(icon: String, title: String, copy: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundColor(Theme.accent)
-                .frame(width: 20, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+    private func featureCell(_ feature: OnboardingFeatureItem) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.md) {
+            Image(systemName: feature.icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(Theme.textPrimary)
+                .frame(width: 22, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.sm, style: .continuous)
+                        .fill(Theme.surfaceElevated)
+                )
+            VStack(alignment: .leading, spacing: 3) {
+                Text(feature.title)
+                    .font(.vfCalloutSemibold)
                     .foregroundColor(Theme.textPrimary)
-                Text(copy)
-                    .font(.system(size: 12))
+                Text(feature.copy)
+                    .font(.vfCaption)
                     .foregroundColor(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .padding(Theme.Space.md)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+        .background(Theme.surface)
     }
 }
 
@@ -667,297 +715,479 @@ private struct OnboardingWelcomeStep: View {
 private struct OnboardingPermissionsStep: View {
     @ObservedObject var permissionService: PermissionService
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            Text("Grant four permissions.")
-                .font(.system(size: 26, weight: .semibold, design: .serif))
-                .foregroundColor(Theme.textPrimary)
+    private let columns = [
+        GridItem(.flexible(minimum: 0), spacing: Theme.Space.md),
+        GridItem(.flexible(minimum: 0), spacing: Theme.Space.md)
+    ]
 
-            Text("VoiceFlow needs to hear you, type for you, detect the fn key, and capture the active window for smart context. macOS won't let us do any of this silently — that's a feature.")
-                .font(.system(size: 13))
-                .foregroundColor(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            OnboardingStepHeader(
+                eyebrow: "Page 2",
+                title: "Grant only what macOS requires.",
+                copy: "Verba needs microphone, typing, hotkey detection, and screen context permissions. Each tile shows the current system state."
+            )
 
             if let warning = permissionService.environmentWarning {
-                HStack(spacing: 8) {
+                HStack(alignment: .top, spacing: Theme.Space.md) {
                     Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(Theme.warning)
                     Text(warning)
-                        .font(.system(size: 12))
+                        .font(.vfCallout)
                         .foregroundColor(Theme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(12)
-                .themedCard(padding: 0)
+                .padding(Theme.Space.md)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                        .fill(Theme.warning.opacity(0.10))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                        .strokeBorder(Theme.warning.opacity(0.25), lineWidth: 1)
+                )
             }
 
-            VStack(spacing: Theme.Space.md) {
-                permissionCard(
+            LazyVGrid(columns: columns, alignment: .leading, spacing: Theme.Space.md) {
+                permissionTile(
+                    icon: "mic.fill",
                     title: "Microphone",
-                    subtitle: "Required — to hear your voice",
+                    subtitle: "Hear your voice while dictating.",
                     state: permissionService.microphoneState,
                     pane: .microphone,
                     request: { permissionService.requestMicrophoneAccess() }
                 )
-                permissionCard(
+                permissionTile(
+                    icon: "keyboard.fill",
                     title: "Accessibility",
-                    subtitle: "Required — to type the transcript into other apps",
+                    subtitle: "Insert the transcript into other apps.",
                     state: permissionService.accessibilityState,
                     pane: .accessibility,
                     request: { permissionService.requestAccessibilityAccess() }
                 )
-                permissionCard(
+                permissionTile(
+                    icon: "command",
                     title: "Input Monitoring",
-                    subtitle: "Required — to detect fn key presses",
+                    subtitle: "Detect the fn trigger reliably.",
                     state: permissionService.inputMonitoringState,
                     pane: .inputMonitoring,
                     request: { permissionService.requestInputMonitoringAccess() }
                 )
-                permissionCard(
+                permissionTile(
+                    icon: "rectangle.on.rectangle",
                     title: "Screen Recording",
-                    subtitle: "Required for smart screenshot context",
+                    subtitle: "Attach the active window as context.",
                     state: permissionService.screenRecordingState,
                     pane: .screenRecording,
                     request: { permissionService.requestScreenRecordingAccess() }
                 )
             }
 
-            if !permissionService.allOnboardingPermissionsGranted {
-                Text("TCC prompts sometimes silently no-op on ad-hoc builds. If a toggle doesn't appear after clicking Grant, use Open Settings to enable it manually.")
-                    .font(.system(size: 11))
-                    .foregroundColor(Theme.textTertiary)
+            HStack(alignment: .top, spacing: Theme.Space.sm) {
+                Image(systemName: permissionService.allOnboardingPermissionsGranted ? "checkmark.circle.fill" : "info.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(permissionService.allOnboardingPermissionsGranted ? Theme.success : Theme.textTertiary)
+                Text(permissionService.allOnboardingPermissionsGranted
+                     ? "All required permissions are enabled."
+                     : "If macOS does not show a prompt, use Open Settings and turn the matching toggle on manually.")
+                    .font(.vfCaption)
+                    .foregroundColor(Theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, Theme.Space.sm)
             }
         }
     }
 
-    private func permissionCard(
+    private func permissionTile(
+        icon: String,
         title: String,
         subtitle: String,
         state: PermissionState,
         pane: PermissionPane,
         request: @escaping () -> Void
     ) -> some View {
-        HStack(spacing: Theme.Space.md) {
-            Image(systemName: state.isGranted ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 20))
-                .foregroundColor(state.isGranted ? Theme.success : Theme.textTertiary)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(Theme.textPrimary)
-                Text(subtitle)
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.textSecondary)
-            }
-
-            Spacer()
-
-            if !state.isGranted {
-                Button("Grant") { request() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                            .fill(Theme.accent)
-                    )
-                    .foregroundColor(.white)
-                Button {
-                    permissionService.openPrivacyPane(pane)
-                } label: {
-                    Text("Open Settings")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.textSecondary)
+        OnboardingSurface {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                HStack(alignment: .top) {
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(state.isGranted ? Theme.success : Theme.textPrimary)
+                        .frame(width: 30, height: 30)
+                        .background(
+                            RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                                .fill(state.isGranted ? Theme.success.opacity(0.12) : Theme.surfaceElevated)
+                        )
+                    Spacer()
+                    permissionBadge(isGranted: state.isGranted)
                 }
-                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.vfBodyMedium)
+                        .foregroundColor(Theme.textPrimary)
+                    Text(subtitle)
+                        .font(.vfCaption)
+                        .foregroundColor(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: Theme.Space.xs)
+
+                if state.isGranted {
+                    Text("Ready")
+                        .font(.vfCaption)
+                        .foregroundColor(Theme.textTertiary)
+                } else {
+                    HStack(spacing: Theme.Space.sm) {
+                        VFButton(title: "Grant", style: .primary, isCompact: true) {
+                            request()
+                        }
+                        VFButton(title: "Open Settings", style: .secondary, isCompact: true) {
+                            permissionService.openPrivacyPane(pane)
+                        }
+                    }
+                }
             }
+            .padding(Theme.Space.lg)
+            .frame(maxWidth: .infinity, minHeight: 178, alignment: .topLeading)
         }
-        .padding(Theme.Space.md)
-        .themedCard(padding: 0)
+    }
+
+    private func permissionBadge(isGranted: Bool) -> some View {
+        Text(isGranted ? "Granted" : "Missing")
+            .font(.vfBadge)
+            .foregroundColor(isGranted ? Theme.success : Theme.textSecondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.RadiusExtra.xs, style: .continuous)
+                    .fill(isGranted ? Theme.success.opacity(0.12) : Theme.surfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.RadiusExtra.xs, style: .continuous)
+                    .strokeBorder(isGranted ? Theme.success.opacity(0.25) : Theme.divider, lineWidth: 1)
+            )
     }
 }
 
-// MARK: - Step 3: API Key
+// MARK: - Step 3: Preferences
 
-private struct OnboardingAPIKeyStep: View {
-    @State private var provider: String = UserDefaults.standard.string(forKey: "transcription_provider")
-        ?? TranscriptionProvider.groq.rawValue   // default to Groq — free escape hatch
-    @State private var openAIKey: String = UserDefaults.standard.string(forKey: "openai_api_key") ?? ""
-    @State private var groqKey:   String = UserDefaults.standard.string(forKey: "groq_api_key") ?? ""
+private struct OnboardingPreferencesStep: View {
+    @State private var selectedLanguage: String
+    @State private var outputMode: String
+    @State private var processingMode: String
+
+    private let languages: [OnboardingChoice] = [
+        .init(id: "auto", title: "Auto-detect", subtitle: "Switches with your speech.", badge: "Recommended"),
+        .init(id: "hi", title: "Hindi", subtitle: "Hindi hint for raw transcription.", badge: nil),
+        .init(id: "en", title: "English", subtitle: "English hint for raw transcription.", badge: nil)
+    ]
+
+    private let outputModes: [OnboardingChoice] = [
+        .init(id: TranscriptOutputStyle.cleanHinglish.rawValue, title: "English output", subtitle: "Mixed speech in English letters.", badge: "Default"),
+        .init(id: TranscriptOutputStyle.translateEnglish.rawValue, title: "Translate", subtitle: "Translate speech into English.", badge: nil),
+        .init(id: TranscriptOutputStyle.verbatim.rawValue, title: "Original", subtitle: "Raw transcript with light cleanup.", badge: nil)
+    ]
+
+    private let processingModes: [OnboardingChoice] = [
+        .init(id: TranscriptProcessingMode.dictation.rawValue, title: "Polish", subtitle: "Clean, format, and preserve your voice.", badge: "Default"),
+        .init(id: TranscriptProcessingMode.rewrite.rawValue, title: "Rewrite", subtitle: "Clean phrasing and structure.", badge: nil),
+        .init(id: TranscriptProcessingMode.promptEngineer.rawValue, title: "Prompt", subtitle: "Format dictated intent for AI agents.", badge: nil)
+    ]
+
+    init() {
+        _selectedLanguage = State(initialValue: UserDefaults.standard.string(forKey: "language") ?? "auto")
+        let storedOutputMode = UserDefaults.standard.string(forKey: "output_mode") ?? TranscriptOutputStyle.cleanHinglish.rawValue
+        _outputMode = State(initialValue: storedOutputMode == TranscriptOutputStyle.clean.rawValue ? TranscriptOutputStyle.translateEnglish.rawValue : storedOutputMode)
+        _processingMode = State(initialValue: UserDefaults.standard.string(forKey: "processing_mode") ?? TranscriptProcessingMode.dictation.rawValue)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            Text("Connect a transcription provider.")
-                .font(.system(size: 26, weight: .semibold, design: .serif))
-                .foregroundColor(Theme.textPrimary)
-
-            Text("Bring your own key. VoiceFlow doesn't proxy your audio — it hits your provider directly, so you pay cents, not a subscription.")
-                .font(.system(size: 13))
-                .foregroundColor(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // Provider picker — segmented, Groq-first because it's free
-            HStack(spacing: 0) {
-                providerPill(
-                    id: TranscriptionProvider.groq.rawValue,
-                    title: "Groq",
-                    sub: "Free · Multilingual")
-                providerPill(
-                    id: TranscriptionProvider.openai.rawValue,
-                    title: "OpenAI",
-                    sub: "Paid · GPT-4 Polish")
-            }
-            .padding(4)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous)
-                    .fill(Theme.divider)
+        VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            OnboardingStepHeader(
+                eyebrow: "Page 3",
+                title: "Choose your language and output.",
+                copy: "These defaults decide what lands after you release fn. You can change them anytime from Settings."
             )
 
-            // Key entry card — contents flip based on provider
-            VStack(alignment: .leading, spacing: 10) {
-                if provider == TranscriptionProvider.groq.rawValue {
-                    Text("Groq API Key")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
-                    SecureField("gsk_...", text: $groqKey)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: groqKey) { _ in
-                            UserDefaults.standard.set(groqKey, forKey: "groq_api_key")
-                        }
-                    Text("Get your free key at [console.groq.com/keys](https://console.groq.com/keys). Multilingual supported — Hindi, Marathi, English + more.")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textSecondary)
-                        .tint(Theme.accent)
-                } else {
-                    Text("OpenAI API Key")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Theme.textPrimary)
-                    SecureField("sk-...", text: $openAIKey)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: openAIKey) { _ in
-                            UserDefaults.standard.set(openAIKey, forKey: "openai_api_key")
-                        }
-                    Text("Get your key at [openai.com/api-keys](https://platform.openai.com/api-keys). Enables GPT-4 post-processing quality.")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textSecondary)
-                        .tint(Theme.accent)
-                }
+            preferenceSection(
+                title: "Language",
+                description: "Used by Original mode only.",
+                options: languages,
+                selection: $selectedLanguage
+            )
+            .onChange(of: selectedLanguage) { newValue in
+                UserDefaults.standard.set(newValue, forKey: "language")
             }
-            .themedCard()
 
-            Text("You can change this later in Settings, or switch to a local model (LM Studio, Ollama) for a zero-cost, zero-network setup.")
-                .font(.system(size: 11))
-                .foregroundColor(Theme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, Theme.Space.sm)
-        }
-        .onChange(of: provider) { newValue in
-            UserDefaults.standard.set(newValue, forKey: "transcription_provider")
+            preferenceSection(
+                title: "Output style",
+                description: "Pick the shape of the final text.",
+                options: outputModes,
+                selection: $outputMode
+            )
+            .onChange(of: outputMode) { newValue in
+                UserDefaults.standard.set(newValue, forKey: "output_mode")
+            }
+
+            preferenceSection(
+                title: "Polish mode",
+                description: "How much rewriting to allow.",
+                options: processingModes,
+                selection: $processingMode
+            )
+            .onChange(of: processingMode) { newValue in
+                UserDefaults.standard.set(newValue, forKey: "processing_mode")
+            }
         }
     }
 
-    private func providerPill(id: String, title: String, sub: String) -> some View {
-        let isSelected = provider == id
-        return Button {
-            provider = id
-        } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(isSelected ? Theme.textPrimary : Theme.textSecondary)
-                Text(sub)
-                    .font(.system(size: 11))
-                    .foregroundColor(isSelected ? Theme.textSecondary : Theme.textTertiary)
+    private func preferenceSection(
+        title: String,
+        description: String,
+        options: [OnboardingChoice],
+        selection: Binding<String>
+    ) -> some View {
+        OnboardingSurface {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                HStack(alignment: .top) {
+                    Text(title)
+                        .font(.vfBodyMedium)
+                        .foregroundColor(Theme.textPrimary)
+                    Spacer()
+                    Text(description)
+                        .font(.vfCaption)
+                        .foregroundColor(Theme.textSecondary)
+                        .multilineTextAlignment(.trailing)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 340, alignment: .trailing)
+                }
+
+                HStack(spacing: Theme.Space.md) {
+                    ForEach(options) { option in
+                        preferenceChoice(option, selection: selection)
+                    }
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.md)
+        }
+    }
+
+    private func preferenceChoice(_ option: OnboardingChoice, selection: Binding<String>) -> some View {
+        let isSelected = selection.wrappedValue == option.id
+
+        return Button {
+            withAnimation(.easeOut(duration: 0.16)) {
+                selection.wrappedValue = option.id
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                HStack(alignment: .top) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(isSelected ? Theme.interactive : Theme.textTertiary)
+                    Spacer()
+                    if let badge = option.badge {
+                        VFBadge(label: badge, style: isSelected ? .promo : .plan)
+                    }
+                }
+                Text(option.title)
+                    .font(.vfCalloutSemibold)
+                    .foregroundColor(Theme.textPrimary)
+                Text(option.subtitle)
+                    .font(.vfCaption)
+                    .foregroundColor(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(Theme.Space.md)
+            .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? Theme.surfaceElevated : Color.clear)
+                RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                    .fill(isSelected ? Theme.interactiveSoft : Theme.surfaceElevated)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                    .strokeBorder(isSelected ? Theme.interactive.opacity(0.45) : Theme.divider, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
+        .vfClickableCursor()
     }
 }
 
-// MARK: - Step 4: Test
+// MARK: - Step 4: Test and Sensitivity
 
-/// Final step: invite the user to try dictation. We observe RunStore and
-/// show the last transcript inline — works whether injection goes
-/// elsewhere or gets suppressed because the onboarding window is front.
+/// Final step: invite the user to try dictation and tune the noise gate with
+/// the same live meter used by Settings.
 private struct OnboardingTestStep: View {
     @ObservedObject var runStore: RunStore
 
+    @StateObject private var microphoneProbe = MicrophoneProbe()
     @State private var initialCount: Int?
     @State private var latestTranscript: String = ""
+    @State private var noiseGateThreshold: Double
+
+    init(runStore: RunStore) {
+        self.runStore = runStore
+        let stored = UserDefaults.standard.object(forKey: "noise_gate_threshold") as? Double
+        _noiseGateThreshold = State(initialValue: stored ?? 0.005)
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Give it a try.")
-                    .font(.system(size: 26, weight: .semibold, design: .serif))
-                    .foregroundColor(Theme.textPrimary)
-            }
+        VStack(alignment: .leading, spacing: Theme.Space.xl) {
+            OnboardingStepHeader(
+                eyebrow: "Page 4",
+                title: "Test dictation and sensitivity.",
+                copy: "First check that your mic crosses the threshold, then hold fn and speak. Your newest onboarding transcript appears below."
+            )
 
-            Text("Hold the fn key and say something — anything. Release when you're done. Your transcript will show up below.")
-                .font(.system(size: 13))
-                .foregroundColor(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            OnboardingSurface {
+                VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Mic sensitivity")
+                            .font(.vfBodyMedium)
+                            .foregroundColor(Theme.textPrimary)
+                        Spacer()
+                        VFButton(
+                            title: microphoneProbe.isProbing ? "Stop" : "Test mic",
+                            icon: microphoneProbe.isProbing ? "stop.fill" : "mic.fill",
+                            style: microphoneProbe.isProbing ? .destructive : .secondary,
+                            isCompact: true
+                        ) {
+                            if microphoneProbe.isProbing {
+                                microphoneProbe.stop()
+                            } else {
+                                microphoneProbe.start()
+                            }
+                        }
+                    }
 
-            // Hero prompt
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Press and hold")
-                    .font(.system(size: 16, weight: .semibold, design: .serif))
-                    .foregroundColor(Theme.textOnDark)
-                HotkeyBadge(label: "fn")
-            }
-            .padding(Theme.Space.lg)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .themedHeroCard()
+                    LevelMeterView(
+                        level: microphoneProbe.currentLevel,
+                        threshold: MicrophoneProbe.normalizedThreshold(noiseGateThreshold),
+                        isActive: microphoneProbe.isProbing
+                    )
 
-            // Live transcript display
-            VStack(alignment: .leading, spacing: 10) {
-                Text("YOUR TRANSCRIPT")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(Theme.textTertiary)
-                    .tracking(0.8)
+                    HStack {
+                        Text(sensitivityCaption)
+                            .font(.vfCaption)
+                            .foregroundColor(Theme.textSecondary)
+                        Spacer()
+                        Text(String(format: "%.3f", noiseGateThreshold))
+                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            .foregroundColor(Theme.textSecondary)
+                    }
 
-                if latestTranscript.isEmpty {
-                    Text("Waiting for you to speak…")
-                        .font(.system(size: 13))
-                        .foregroundColor(Theme.textTertiary)
-                        .italic()
-                } else {
-                    Text(latestTranscript)
-                        .font(.system(size: 14))
-                        .foregroundColor(Theme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Slider(value: $noiseGateThreshold, in: 0.001...0.05, step: 0.001)
+                        .tint(Theme.textPrimary)
+                        .onChange(of: noiseGateThreshold) { newValue in
+                            UserDefaults.standard.set(newValue, forKey: "noise_gate_threshold")
+                        }
+
+                    HStack(spacing: Theme.Space.sm) {
+                        sensitivityPresetButton(label: "Sensitive", threshold: 0.003)
+                        sensitivityPresetButton(label: "Balanced", threshold: 0.008)
+                        sensitivityPresetButton(label: "Strict", threshold: 0.020)
+                    }
                 }
+                .padding(Theme.Space.lg)
             }
-            .frame(maxWidth: .infinity, minHeight: 100, alignment: .topLeading)
-            .themedCard()
 
-            Text("If fn doesn't trigger, check System Settings → Keyboard → \"Press Fn key to\" and set it to Do Nothing, or use the Settings tab to pick a different hotkey.")
-                .font(.system(size: 11))
+            OnboardingSurface {
+                VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                    HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
+                        Text("Press and hold")
+                            .font(.vfBodyMedium)
+                            .foregroundColor(Theme.textPrimary)
+                        HotkeyBadge(label: "fn")
+                        Text("to dictate")
+                            .font(.vfBodyMedium)
+                            .foregroundColor(Theme.textPrimary)
+                    }
+
+                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                        Text("YOUR TRANSCRIPT")
+                            .font(.vfCategoryLabel)
+                            .foregroundColor(Theme.textTertiary)
+                            .tracking(0.5)
+
+                        if latestTranscript.isEmpty {
+                            Text("Waiting for your first test run.")
+                                .font(.vfCallout)
+                                .foregroundColor(Theme.textTertiary)
+                                .italic()
+                        } else {
+                            Text(latestTranscript)
+                                .font(.vfBody)
+                                .foregroundColor(Theme.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(Theme.Space.md)
+                    .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                            .fill(Theme.surfaceElevated)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                            .strokeBorder(Theme.divider, lineWidth: 1)
+                    )
+                }
+                .padding(Theme.Space.lg)
+            }
+
+            Text("If fn does not trigger, check System Settings > Keyboard > Press Fn key to, and set it to Do Nothing. You can also choose a different hotkey later.")
+                .font(.vfCaption)
                 .foregroundColor(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, Theme.Space.sm)
         }
         .onReceive(runStore.$summaries) { summaries in
-            // First render — seed, don't backfill with history.
             if initialCount == nil {
                 initialCount = summaries.count
                 return
             }
-            // Only surface transcripts landed since onboarding started.
             if let newest = summaries.first, summaries.count > (initialCount ?? 0) {
                 latestTranscript = newest.previewText
             }
         }
+        .onDisappear {
+            microphoneProbe.stop()
+        }
+    }
+
+    private var sensitivityCaption: String {
+        if !microphoneProbe.isProbing {
+            return "Start a mic test and speak normally. The level should cross the threshold tick."
+        }
+        if microphoneProbe.currentLevel >= MicrophoneProbe.normalizedThreshold(noiseGateThreshold) {
+            return "Voice is crossing the threshold. This setting should capture you."
+        }
+        return "Speak normally. Lower the threshold if your voice stays below the tick."
+    }
+
+    private func sensitivityPresetButton(label: String, threshold: Double) -> some View {
+        let isSelected = abs(noiseGateThreshold - threshold) < 0.0005
+        return Button {
+            noiseGateThreshold = threshold
+            UserDefaults.standard.set(threshold, forKey: "noise_gate_threshold")
+        } label: {
+            Text(label)
+                .font(.vfCaption)
+                .foregroundColor(isSelected ? Theme.textOnDark : Theme.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.sm, style: .continuous)
+                        .fill(isSelected ? Theme.textPrimary : Theme.surfaceElevated)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.sm, style: .continuous)
+                        .strokeBorder(isSelected ? Color.clear : Theme.divider, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .vfClickableCursor()
     }
 }

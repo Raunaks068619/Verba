@@ -1,5 +1,57 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
+
+private enum MagicWordsTab: String {
+    case all
+    case commands
+    case custom
+}
+
+private struct MagicWordsInstalledApp: Identifiable {
+    let id: String
+    let name: String
+    let icon: NSImage
+}
+
+private final class MagicWordsInstalledApps: ObservableObject {
+    @Published var apps: [MagicWordsInstalledApp] = []
+
+    init() {
+        apps = Self.loadApps()
+    }
+
+    private static func loadApps() -> [MagicWordsInstalledApp] {
+        let applicationsURL = URL(fileURLWithPath: "/Applications")
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: applicationsURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        let featuredApps = [
+            "Codex", "Claude", "ChatGPT", "Google Chrome",
+            "Slack", "Visual Studio Code", "Postman", "WhatsApp"
+        ]
+
+        return urls
+            .filter { $0.pathExtension == "app" }
+            .map { url in
+                let name = url.deletingPathExtension().lastPathComponent
+                let icon = (NSWorkspace.shared.icon(forFile: url.path).copy() as? NSImage)
+                    ?? NSWorkspace.shared.icon(forFile: url.path)
+                icon.size = NSSize(width: 64, height: 64)
+                return MagicWordsInstalledApp(id: url.path, name: name, icon: icon)
+            }
+            .filter { featuredApps.contains($0.name) }
+            .sorted { lhs, rhs in
+                let lhsRank = featuredApps.firstIndex(of: lhs.name) ?? Int.max
+                let rhsRank = featuredApps.firstIndex(of: rhs.name) ?? Int.max
+                if lhsRank != rhsRank { return lhsRank < rhsRank }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+    }
+}
 
 /// Editor for the magic-word registry.
 ///
@@ -14,9 +66,12 @@ struct MagicWordsSettingsView: View {
     private var magicWordsEnabled: Bool = true
 
     @ObservedObject var store: MagicWordStore = .shared
+    @StateObject private var installedApps = MagicWordsInstalledApps()
 
     @State private var editing: MagicWord?
     @State private var search: String = ""
+    @State private var selectedTab: String = MagicWordsTab.all.rawValue
+    @State private var hoveredEntryID: UUID?
     @State private var showAddSheet = false
     @State private var showImporter = false
     @State private var showExporter = false
@@ -24,14 +79,22 @@ struct MagicWordsSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                voiceActionsPanel
-                customRegistryPanel
+            VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                magicWordsPageHeader
+                magicWordsToolbar
+                if selectedTab != MagicWordsTab.custom.rawValue {
+                    snippetHero
+                }
+                if selectedTab != MagicWordsTab.commands.rawValue {
+                    customMagicWordsList
+                }
             }
-            .padding(Theme.Space.xl)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: Theme.Layout.centralContentWidth, alignment: .leading)
+            .padding(.horizontal, Theme.Layout.contentHPad)
+            .padding(.top, Theme.Layout.contentVPad)
+            .padding(.bottom, 48)
         }
+        .background(Theme.mainContent)
         .sheet(isPresented: $showAddSheet) {
             MagicWordEditorSheet(
                 word: nil,
@@ -53,424 +116,312 @@ struct MagicWordsSettingsView: View {
             isPresented: $showExporter,
             document: exportDoc,
             contentType: .json,
-            defaultFilename: "voiceflow-magic-words.json"
+            defaultFilename: "\(AppBrand.name.lowercased())-magic-words.json"
         ) { _ in }
     }
 
     // MARK: - Header
 
-    private var header: some View {
-        HStack(alignment: .top, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Image(systemName: "wand.and.stars")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(Theme.accent)
-                    Text("Magic Words")
-                        .font(.system(size: 28, weight: .semibold, design: .serif))
-                        .foregroundColor(Theme.textPrimary)
-                }
-                Text("Command phrases and custom voice shortcuts in one place.")
-                    .font(.system(size: 13))
-                    .foregroundColor(Theme.textSecondary)
+    private var magicWordsPageHeader: some View {
+        HStack(alignment: .center) {
+            HStack(spacing: Theme.Space.sm) {
+                Text("Magic Words")
+                    .font(.vfPageTitle)
+                    .foregroundColor(Theme.textPrimary)
+                VFBadge(label: magicWordsEnabled ? "Listening" : "Off",
+                        style: magicWordsEnabled ? .promo : .plan)
             }
 
             Spacer()
 
-            HStack(spacing: 10) {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(magicWordsEnabled ? "Enabled" : "Disabled")
-                        .font(.system(size: 12, weight: .semibold))
+            HStack(spacing: Theme.Space.md) {
+                HStack(spacing: Theme.Space.sm) {
+                    Text("Enabled")
+                        .font(.vfCalloutMedium)
                         .foregroundColor(Theme.textPrimary)
-                    Text("Actions + snippets")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.textTertiary)
+                    VFSwitch(isOn: $magicWordsEnabled)
                 }
-                Toggle("", isOn: $magicWordsEnabled)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                    .fill(Theme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                    .strokeBorder(Theme.divider, lineWidth: 1)
-            )
-        }
-    }
-
-    // MARK: - Voice Actions
-
-    private var voiceActionsPanel: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top, spacing: 14) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        sectionIcon("sparkles")
-                        Text("Built-in App Actions")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(Theme.textOnDark)
-                    }
-                    Text("Say these directly. VoiceFlow opens the app and, when asked, inserts your text there.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Theme.textOnDark.opacity(0.72))
-                }
-                Spacer()
-                statusPill(magicWordsEnabled ? "Listening" : "Off",
-                           color: magicWordsEnabled ? Theme.success : Theme.textTertiary)
-            }
-
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 220), spacing: 12)],
-                spacing: 12
-            ) {
-                actionExample(
-                    title: "Open",
-                    phrase: "open Codex",
-                    result: "Launches Codex"
-                )
-                actionExample(
-                    title: "Open + Insert",
-                    phrase: "open Claude and type write a launch plan",
-                    result: "Launches Claude, then pastes the prompt"
-                )
-                actionExample(
-                    title: "Ask",
-                    phrase: "open ChatGPT and ask improve this email",
-                    result: "Opens ChatGPT with your request ready"
-                )
-            }
-
-            Divider()
-                .overlay(Color.white.opacity(0.12))
-
-            HStack(alignment: .top, spacing: 14) {
-                commandReference(
-                    title: "Action words",
-                    items: ["open", "launch", "start"]
-                )
-                commandReference(
-                    title: "Insert words",
-                    items: ["and type", "and paste", "and write", "and enter", "and ask"]
-                )
-                commandReference(
-                    title: "Known aliases",
-                    items: ["Claude / Cloud", "Codex", "ChatGPT", "Chrome", "Cursor", "VS Code", "Terminal", "Slack", "Notes"]
-                )
-            }
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous)
-                .fill(Theme.surfaceDark)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .shadow(color: Theme.Shadow.elevated.color,
-                radius: Theme.Shadow.elevated.radius,
-                x: 0, y: Theme.Shadow.elevated.y)
-    }
-
-    private func actionExample(title: String, phrase: String, result: String) -> some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Theme.textOnDark.opacity(0.78))
-                Spacer()
-                Image(systemName: "arrow.up.forward")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(Theme.accent)
-            }
-            Text(phrase)
-                .font(.system(size: 13, weight: .semibold).monospaced())
-                .foregroundColor(Theme.textOnDark)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(result)
-                .font(.system(size: 11))
-                .foregroundColor(Theme.textOnDark.opacity(0.60))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Theme.surfaceDarkSoft)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-        )
-    }
-
-    private func commandReference(title: String, items: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Theme.textOnDark.opacity(0.64))
-            FlowWrap(spacing: 6, rowSpacing: 6) {
-                ForEach(items, id: \.self) { item in
-                    Text(item)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.textOnDark.opacity(0.86))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(Color.white.opacity(0.10)))
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func statusPill(_ text: String, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(color)
-                .frame(width: 7, height: 7)
-            Text(text)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(Theme.textOnDark)
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(Color.white.opacity(0.12)))
-    }
-
-    private func sectionIcon(_ systemName: String) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundColor(.white)
-            .frame(width: 24, height: 24)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Theme.accent)
-            )
-    }
-
-    // MARK: - Custom Registry
-
-    private var customRegistryPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        sectionIconLight("text.cursor")
-                        Text("Custom Magic Words")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(Theme.textPrimary)
-                    }
-                    Text("Configure phrase -> expansion shortcuts. Prefix matches append anything you say after the trigger.")
-                        .font(.system(size: 12))
-                        .foregroundColor(Theme.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                countPill
-            }
-
-            HStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.textSecondary)
-                    TextField("Search phrases, expansions, tags...", text: $search)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                        .foregroundColor(Theme.textPrimary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .padding(.leading, Theme.Space.md)
+                .padding(.trailing, Theme.Space.sm)
+                .padding(.vertical, Theme.Space.sm)
                 .background(
-                    RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                        .fill(Theme.surfaceElevated)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                        .strokeBorder(Theme.divider, lineWidth: 1)
+                    Capsule(style: .continuous)
+                        .fill(Theme.compactToggleFill)
                 )
 
-                Spacer(minLength: 8)
-
-                secondaryButton(label: "Import", icon: "square.and.arrow.down") {
-                    showImporter = true
-                }
-                secondaryButton(label: "Export", icon: "square.and.arrow.up") {
-                    exportDoc = MagicWordExportDocument(entries: store.snapshot())
-                    showExporter = true
-                }
-                primaryButton(label: "Add", icon: "plus") {
+                VFButton(title: "Add new", style: .primary) {
                     showAddSheet = true
                 }
             }
+        }
+    }
 
+    private var magicWordsToolbar: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center) {
+                VFTabBar(
+                    options: [
+                        ("all", "All"),
+                        ("commands", "App commands"),
+                        ("custom", "Custom snippets"),
+                    ],
+                    selection: $selectedTab
+                )
+
+                Spacer(minLength: Theme.Space.lg)
+
+                HStack(spacing: Theme.Space.sm) {
+                    VFSearchBar(text: $search, placeholder: "Search")
+                        .opacity(selectedTab == MagicWordsTab.commands.rawValue ? 0.45 : 1)
+                        .disabled(selectedTab == MagicWordsTab.commands.rawValue)
+                    magicToolbarIcon("square.and.arrow.down", help: "Import") {
+                        showImporter = true
+                    }
+                    magicToolbarIcon("square.and.arrow.up", help: "Export") {
+                        exportDoc = MagicWordExportDocument(entries: store.snapshot())
+                        showExporter = true
+                    }
+                }
+            }
+            .padding(.bottom, Theme.Space.sm)
+
+            Rectangle()
+                .fill(Theme.divider)
+                .frame(height: 1)
+        }
+    }
+
+    private var snippetHero: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                snippetHeroTitle
+                Text("Save the phrases you repeat. When you say the short version, \(AppBrand.name) expands it before typing.")
+                    .font(.vfCallout)
+                    .foregroundColor(Theme.textOnDarkSecondary)
+                    .frame(maxWidth: 560, alignment: .leading)
+            }
+
+            snippetHeroFlow(
+                trigger: "project intro",
+                expansion: "Thanks for the context. Here is the short version of the plan and the next steps."
+            )
+            .padding(.top, Theme.Space.xs)
+
+            commandExecutionInline
+        }
+        .padding(Theme.Space.xl)
+        .frame(maxWidth: .infinity, minHeight: 260, alignment: .leading)
+        .background {
+            VFBlueMeshHeroBackground()
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.hero, style: .continuous)
+                .strokeBorder(Theme.dividerStrong, lineWidth: 1)
+        )
+        .shadow(color: Theme.Shadow.elevated.color,
+                radius: Theme.Shadow.elevated.radius,
+                x: 0,
+                y: Theme.Shadow.elevated.y)
+    }
+
+    private var commandExecutionInline: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            Rectangle()
+                .fill(Theme.textOnDark.opacity(0.16))
+                .frame(height: 1)
+                .padding(.top, Theme.Space.xs)
+
+            executeCommandQuote
+
+            if installedApps.apps.isEmpty {
+                Text("No apps found in /Applications.")
+                    .font(.vfCallout)
+                    .foregroundColor(Theme.textOnDarkSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, Theme.Space.sm)
+            } else {
+                HStack(alignment: .top, spacing: Theme.Space.xl) {
+                    ForEach(installedApps.apps) { app in
+                        installedAppIcon(app)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.top, Theme.Space.xs)
+    }
+
+    private func installedAppIcon(_ app: MagicWordsInstalledApp) -> some View {
+        VStack(spacing: Theme.Space.xs) {
+            Image(nsImage: app.icon)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 38, height: 38)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            Text(app.name)
+                .font(.vfCaption)
+                .foregroundColor(Theme.textOnDarkSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: 58)
+        }
+        .help("Say \"Open \(app.name)\" followed by the action or text you want.")
+    }
+
+    private var snippetHeroTitle: some View {
+        (Text("Snippets turn ")
+            .font(.system(size: 26, weight: .semibold, design: .serif))
+         + Text("short phrases")
+            .font(.custom("Georgia", size: 26).italic())
+         + Text(" into full text.")
+            .font(.system(size: 26, weight: .semibold, design: .serif)))
+            .foregroundColor(Theme.textOnDark)
+    }
+
+    private var executeCommandQuote: some View {
+        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.xs) {
+            Image(systemName: "quote.opening")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Theme.textOnDark.opacity(0.70))
+            Text("“open Claude and draft a release checklist”")
+                .font(.vfCalloutSemibold)
+                .foregroundColor(Theme.textOnDark)
+        }
+        .padding(.top, Theme.Space.xs)
+    }
+
+    private func snippetHeroFlow(trigger: String, expansion: String) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            Text(trigger)
+                .font(.vfCalloutSemibold)
+                .foregroundColor(Theme.textPrimary)
+                .lineLimit(1)
+                .padding(.horizontal, Theme.Space.md)
+                .frame(height: 32)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                        .fill(Theme.textOnDark.opacity(0.92))
+                )
+            Image(systemName: "arrow.right")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(Theme.textOnDark.opacity(0.72))
+            Text("“\(expansion)”")
+                .font(.vfCalloutMedium)
+                .foregroundColor(Theme.textPrimary.opacity(0.86))
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
+                .truncationMode(.tail)
+                .padding(.horizontal, Theme.Space.lg)
+                .padding(.vertical, Theme.Space.sm)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+                        .fill(Theme.textOnDark.opacity(0.72))
+                )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var customMagicWordsList: some View {
+        VStack(spacing: 0) {
             if filteredEntries.isEmpty {
                 emptyState
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(filteredEntries.enumerated()), id: \.element.id) { index, entry in
-                        row(for: entry)
-                            .padding(.vertical, 12)
-                        if index < filteredEntries.count - 1 {
-                            Divider().background(Theme.divider)
-                        }
+                ForEach(Array(filteredEntries.enumerated()), id: \.element.id) { index, entry in
+                    row(for: entry)
+                    if index < filteredEntries.count - 1 {
+                        Rectangle()
+                            .fill(Theme.divider)
+                            .frame(height: 1)
                     }
                 }
             }
         }
-        .themedCard()
+        .background(Theme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .strokeBorder(Theme.divider, lineWidth: 1)
+        )
     }
 
-    private var countPill: some View {
-        Text("\(filteredEntries.count) / \(store.entries.count)")
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(Theme.textSecondary)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(Theme.surfaceElevated))
-            .overlay(Capsule().strokeBorder(Theme.divider, lineWidth: 1))
-    }
-
-    private func sectionIconLight(_ systemName: String) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundColor(.white)
-            .frame(width: 24, height: 24)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(Theme.accent)
-            )
+    private func magicToolbarIcon(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(Theme.textTertiary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .vfClickableCursor()
+        .help(help)
     }
 
     // MARK: - Empty state
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "wand.and.stars")
-                .font(.system(size: 28, weight: .light))
-                .foregroundColor(Theme.textSecondary)
-            Text(store.entries.isEmpty ? "No Magic Words yet" : "No matches")
-                .font(.system(size: 14, weight: .semibold))
+        VStack(spacing: Theme.Space.sm) {
+            Image(systemName: "text.quote")
+                .font(.system(size: 24, weight: .medium))
+                .foregroundColor(Theme.textTertiary)
+            Text(store.entries.isEmpty ? "No custom snippets yet" : "No matches")
+                .font(.vfBodyMedium)
                 .foregroundColor(Theme.textPrimary)
             Text(store.entries.isEmpty
-                 ? "Add a phrase like \u{201C}git wip\u{201D} → \u{201C}git add -A && git commit -m\u{2026}\u{201D}."
+                 ? "Add a phrase like \"git wip\" and \(AppBrand.name) will expand it when you speak."
                  : "Try a different search.")
-                .font(.system(size: 12))
+                .font(.vfCallout)
                 .foregroundColor(Theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
+        .padding(.vertical, 36)
     }
 
     // MARK: - Row
 
     @ViewBuilder
     private func row(for entry: MagicWord) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text("\u{201C}\(entry.phrase)\u{201D}")
-                        .font(.system(size: 13, weight: .semibold).monospaced())
-                        .foregroundColor(Theme.textPrimary)
-                    if let scope = entry.surfaceScope {
-                        scopeBadge(scope)
-                    }
-                    if let tag = entry.tag, !tag.isEmpty {
-                        tagPill(tag)
-                    }
-                    if !entry.enabled {
-                        disabledPill
-                    }
-                }
-                Text(entry.expansion)
-                    .font(.system(size: 12).monospaced())
-                    .foregroundColor(Theme.textSecondary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            HStack(spacing: 6) {
-                Toggle("", isOn: Binding(
-                    get: { entry.enabled },
-                    set: { newValue in
-                        var updated = entry
-                        updated.enabled = newValue
-                        store.update(updated)
-                    }
-                ))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .labelsHidden()
+        HStack(alignment: .center, spacing: Theme.Space.md) {
+            Text("\(entry.phrase) → \(entry.expansion)")
+                .font(.vfBody)
+                .foregroundColor(entry.enabled ? Theme.textPrimary : Theme.textTertiary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Button {
+            if !entry.enabled {
+                disabledPill
+            }
+
+            HStack(spacing: Theme.Space.xs) {
+                magicRowIcon("pencil", help: "Edit") {
                     editing = entry
-                } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.textPrimary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Theme.surfaceElevated)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(Theme.divider, lineWidth: 1)
-                        )
                 }
-                .buttonStyle(.plain)
-
-                Button {
+                magicRowIcon("trash", help: "Delete", color: Theme.danger) {
                     store.delete(id: entry.id)
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(Theme.danger)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Theme.surfaceElevated)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(Theme.divider, lineWidth: 1)
-                        )
                 }
-                .buttonStyle(.plain)
             }
+            .opacity(hoveredEntryID == entry.id ? 1 : 0)
+        }
+        .padding(.horizontal, 18)
+        .frame(height: Theme.Layout.listRowHeight)
+        .background(hoveredEntryID == entry.id ? Theme.surfaceElevated.opacity(0.38) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            editing = entry
+        }
+        .vfClickableCursor()
+        .onHover { isHovering in
+            hoveredEntryID = isHovering ? entry.id : nil
         }
     }
 
     // MARK: - Pills
-
-    private func scopeBadge(_ surface: AppSurface) -> some View {
-        Text(surface.rawValue)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(Theme.textPrimary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(Theme.accent.opacity(0.18)))
-    }
-
-    private func tagPill(_ tag: String) -> some View {
-        Text("#\(tag)")
-            .font(.system(size: 10))
-            .foregroundColor(Theme.textSecondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(Theme.divider))
-    }
 
     private var disabledPill: some View {
         Text("disabled")
@@ -481,50 +432,13 @@ struct MagicWordsSettingsView: View {
             .background(Capsule().fill(Theme.divider.opacity(0.6)))
     }
 
-    // MARK: - Buttons
-
-    private func primaryButton(label: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
-                Text(label).font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                    .fill(Theme.accent)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func secondaryButton(label: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 11, weight: .medium))
-                Text(label).font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(Theme.textPrimary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                    .fill(Theme.surfaceElevated)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                    .strokeBorder(Theme.dividerStrong, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-
     // MARK: - Helpers
 
     private var filteredEntries: [MagicWord] {
         let all = store.entries.sorted { $0.updatedAt > $1.updatedAt }
+        if selectedTab == MagicWordsTab.commands.rawValue {
+            return []
+        }
         guard !search.isEmpty else { return all }
         let q = search.lowercased()
         return all.filter {
@@ -532,6 +446,24 @@ struct MagicWordsSettingsView: View {
                 || $0.expansion.lowercased().contains(q)
                 || ($0.tag ?? "").lowercased().contains(q)
         }
+    }
+
+    private func magicRowIcon(
+        _ systemName: String,
+        help: String,
+        color: Color = Theme.textSecondary,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(color)
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .vfClickableCursor()
+        .help(help)
     }
 
     private func handleImport(result: Result<URL, Error>) {
@@ -548,81 +480,6 @@ struct MagicWordsSettingsView: View {
         case .failure(let err):
             print("Magic Words import failed: \(err)")
         }
-    }
-}
-
-// MARK: - Flow layout
-
-struct FlowWrap: Layout {
-    var spacing: CGFloat = 8
-    var rowSpacing: CGFloat = 8
-
-    func sizeThatFits(
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) -> CGSize {
-        let rows = arrangedRows(maxWidth: proposal.width, subviews: subviews)
-        let width = proposal.width ?? rows.map(\.width).max() ?? 0
-        let height = rows.enumerated().reduce(CGFloat.zero) { total, item in
-            total + item.element.height + (item.offset == rows.count - 1 ? 0 : rowSpacing)
-        }
-        return CGSize(width: width, height: height)
-    }
-
-    func placeSubviews(
-        in bounds: CGRect,
-        proposal: ProposedViewSize,
-        subviews: Subviews,
-        cache: inout ()
-    ) {
-        let rows = arrangedRows(maxWidth: bounds.width, subviews: subviews)
-        var y = bounds.minY
-
-        for row in rows {
-            var x = bounds.minX
-            for index in row.indices {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(
-                    at: CGPoint(x: x, y: y),
-                    proposal: ProposedViewSize(width: size.width, height: size.height)
-                )
-                x += size.width + spacing
-            }
-            y += row.height + rowSpacing
-        }
-    }
-
-    private func arrangedRows(
-        maxWidth proposedWidth: CGFloat?,
-        subviews: Subviews
-    ) -> [(indices: [Int], width: CGFloat, height: CGFloat)] {
-        guard !subviews.isEmpty else { return [] }
-        let maxWidth = max(proposedWidth ?? .greatestFiniteMagnitude, 1)
-        var rows: [(indices: [Int], width: CGFloat, height: CGFloat)] = []
-        var current: [Int] = []
-        var currentWidth: CGFloat = 0
-        var currentHeight: CGFloat = 0
-
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
-            let nextWidth = current.isEmpty ? size.width : currentWidth + spacing + size.width
-            if nextWidth > maxWidth, !current.isEmpty {
-                rows.append((current, currentWidth, currentHeight))
-                current = [index]
-                currentWidth = size.width
-                currentHeight = size.height
-            } else {
-                current.append(index)
-                currentWidth = nextWidth
-                currentHeight = max(currentHeight, size.height)
-            }
-        }
-
-        if !current.isEmpty {
-            rows.append((current, currentWidth, currentHeight))
-        }
-        return rows
     }
 }
 
@@ -654,124 +511,201 @@ struct MagicWordEditorSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(original == nil ? "New Magic Word" : "Edit Magic Word")
-                    .font(.system(size: 18, weight: .semibold, design: .serif))
-                    .foregroundColor(Theme.textPrimary)
-                Text("Prefix-only matching. Edit distance ≤1 absorbs Whisper noise.")
-                    .font(.system(size: 12))
-                    .foregroundColor(Theme.textSecondary)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                fieldLabel("Phrase")
-                TextField("e.g. \u{201C}git wip\u{201D}", text: $phrase)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                            .fill(Theme.surfaceElevated)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                            .strokeBorder(Theme.divider, lineWidth: 1)
-                    )
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                fieldLabel("Expansion")
-                TextEditor(text: $expansion)
-                    .font(.system(size: 13).monospaced())
-                    .frame(minHeight: 100)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                            .fill(Theme.surfaceElevated)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                            .strokeBorder(Theme.divider, lineWidth: 1)
-                    )
-            }
-
-            HStack(alignment: .top, spacing: Theme.Space.md) {
-                VStack(alignment: .leading, spacing: 6) {
-                    fieldLabel("Tag (optional)")
-                    TextField("git, k8s, sql…", text: $tag)
-                        .textFieldStyle(.plain)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
-                        .background(
-                            RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                                .fill(Theme.surfaceElevated)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                                .strokeBorder(Theme.divider, lineWidth: 1)
-                        )
-                        .frame(width: 180)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    fieldLabel("Scope")
-                    Picker("", selection: Binding(
-                        get: { scope?.rawValue ?? "any" },
-                        set: { newValue in
-                            scope = newValue == "any" ? nil : AppSurface(rawValue: newValue)
-                        }
-                    )) {
-                        Text("Any surface").tag("any")
-                        ForEach(AppSurface.allKnown, id: \.self) { surface in
-                            Text(surface.rawValue.capitalized).tag(surface.rawValue)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 180)
-                }
-
-                Spacer()
-
-                VStack(alignment: .leading, spacing: 6) {
-                    fieldLabel("Enabled")
-                    Toggle("", isOn: $enabled)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                }
-            }
-
-            Spacer()
-
-            HStack {
-                Spacer()
-                Button("Cancel", action: onCancel)
-                    .keyboardShortcut(.cancelAction)
-                Button("Save") {
-                    let word = MagicWord(
-                        id: original?.id ?? UUID(),
-                        phrase: phrase.trimmingCharacters(in: .whitespacesAndNewlines),
-                        expansion: expansion,
-                        tag: tag.isEmpty ? nil : tag,
-                        surfaceScope: scope,
-                        enabled: enabled,
-                        updatedAt: Date()
-                    )
-                    onSave(word)
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(phrase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || expansion.isEmpty)
-            }
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            editorHeader
+            editorFormCard
+            editorFooter
         }
         .padding(Theme.Space.xl)
-        .frame(width: 580, height: 520)
-        .background(Theme.canvas)
+        .frame(width: Theme.Layout.modalEditorWidth, height: 480)
+        .background(Theme.mainContent)
     }
 
-    private func fieldLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(Theme.textSecondary)
+    private var editorHeader: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            Text(original == nil ? "New snippet" : "Edit snippet")
+                .font(.vfSectionTitle)
+                .foregroundColor(Theme.textPrimary)
+            Text("Set the phrase, expansion, and where \(AppBrand.name) should apply it.")
+                .font(.vfCallout)
+                .foregroundColor(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var editorFormCard: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                editorFieldHeader("Phrase", "The short phrase you say.")
+                editorTextField("project intro", text: $phrase)
+            }
+            .padding(.horizontal, Theme.Space.xl)
+            .padding(.vertical, Theme.Space.md)
+
+            editorDivider
+
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                editorFieldHeader("Expansion", "The text \(AppBrand.name) inserts.")
+                expansionEditor
+            }
+            .padding(.horizontal, Theme.Space.xl)
+            .padding(.vertical, Theme.Space.md)
+
+            editorDivider
+
+            HStack(alignment: .bottom, spacing: Theme.Space.lg) {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    editorFieldHeader("Tag", "Optional grouping.")
+                    editorTextField("git, k8s, sql", text: $tag, width: 210)
+                }
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    editorFieldHeader("Scope", "Where it can trigger.")
+                    VFDropdown(options: scopeOptions, selection: scopeSelection, width: 180)
+                }
+
+                Spacer()
+
+                HStack(spacing: Theme.Space.sm) {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("Enabled")
+                            .font(.vfBody)
+                            .foregroundColor(Theme.textPrimary)
+                        Text(enabled ? "Active" : "Paused")
+                            .font(.vfDescription)
+                            .foregroundColor(Theme.textSecondary)
+                    }
+                    VFSwitch(isOn: $enabled)
+                }
+            }
+            .padding(.horizontal, Theme.Space.xl)
+            .padding(.vertical, Theme.Space.md)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .fill(Theme.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                .strokeBorder(Theme.divider, lineWidth: 1)
+        )
+    }
+
+    private var editorFooter: some View {
+        HStack(spacing: Theme.Space.sm) {
+            Spacer()
+            VFButton(title: "Cancel", style: .secondary, isCompact: true, action: onCancel)
+                .keyboardShortcut(.cancelAction)
+            VFButton(
+                title: "Save",
+                style: .primary,
+                isCompact: true,
+                isDisabled: !canSave,
+                action: save
+            )
+            .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private var expansionEditor: some View {
+        ZStack(alignment: .topLeading) {
+            if expansion.isEmpty {
+                Text("Thanks for the context. Here is the short version of the plan and the next steps.")
+                    .font(.vfCallout)
+                    .foregroundColor(Theme.textTertiary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .allowsHitTesting(false)
+            }
+
+            TextEditor(text: $expansion)
+                .font(.vfCallout)
+                .foregroundColor(Theme.textPrimary)
+                .scrollContentBackground(.hidden)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+        }
+        .frame(height: 112)
+        .background(inputBackground)
+        .overlay(inputBorder)
+    }
+
+    private var editorDivider: some View {
+        Rectangle()
+            .fill(Theme.divider)
+            .frame(height: 1)
+            .padding(.leading, Theme.Space.xl)
+    }
+
+    private var scopeOptions: [(id: String, label: String)] {
+        [(id: "any", label: "Any surface")]
+            + AppSurface.allKnown.map { (id: $0.rawValue, label: $0.rawValue.capitalized) }
+    }
+
+    private var scopeSelection: Binding<String> {
+        Binding(
+            get: { scope?.rawValue ?? "any" },
+            set: { newValue in
+                scope = newValue == "any" ? nil : AppSurface(rawValue: newValue)
+            }
+        )
+    }
+
+    private var canSave: Bool {
+        !phrase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !expansion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var inputBackground: some View {
+        RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+            .fill(Theme.surfaceElevated)
+    }
+
+    private var inputBorder: some View {
+        RoundedRectangle(cornerRadius: Theme.RadiusExtra.input, style: .continuous)
+            .strokeBorder(Theme.dividerStrong, lineWidth: 1)
+    }
+
+    private func editorFieldHeader(_ title: String, _ description: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.vfBodyMedium)
+                .foregroundColor(Theme.textPrimary)
+            Text(description)
+                .font(.vfDescription)
+                .foregroundColor(Theme.textSecondary)
+            Spacer(minLength: Theme.Space.md)
+        }
+    }
+
+    private func editorTextField(
+        _ placeholder: String,
+        text: Binding<String>,
+        width: CGFloat? = nil
+    ) -> some View {
+        TextField(placeholder, text: text)
+            .font(.vfCallout)
+            .foregroundColor(Theme.textPrimary)
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 14)
+            .frame(width: width, height: Theme.Layout.inputHeight)
+            .background(inputBackground)
+            .overlay(inputBorder)
+    }
+
+    private func save() {
+        guard canSave else { return }
+        let word = MagicWord(
+            id: original?.id ?? UUID(),
+            phrase: phrase.trimmingCharacters(in: .whitespacesAndNewlines),
+            expansion: expansion,
+            tag: tag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil
+                : tag.trimmingCharacters(in: .whitespacesAndNewlines),
+            surfaceScope: scope,
+            enabled: enabled,
+            updatedAt: Date()
+        )
+        onSave(word)
     }
 }
 

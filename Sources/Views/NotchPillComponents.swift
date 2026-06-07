@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 enum NotchPillPalette {
     static let fill = Color.black
@@ -60,11 +61,20 @@ struct VFLogoView: View {
     var color: Color = NotchPillPalette.mark.opacity(0.92)
 
     var body: some View {
-        HStack(alignment: .center, spacing: 1.4) {
-            ForEach(0..<5, id: \.self) { index in
-                Capsule()
-                    .fill(color)
-                    .frame(width: 1.8, height: markHeight(for: index))
+        Group {
+            if let image = AppBrand.logoImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+            } else {
+                HStack(alignment: .center, spacing: 1.4) {
+                    ForEach(0..<5, id: \.self) { index in
+                        Capsule()
+                            .fill(color)
+                            .frame(width: 1.8, height: markHeight(for: index))
+                    }
+                }
             }
         }
     }

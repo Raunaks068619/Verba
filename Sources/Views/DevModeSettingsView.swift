@@ -6,6 +6,11 @@ import SwiftUI
 /// VStack spacing 20, every group in a `themedCard()` with the same
 /// 14pt-semibold section title pattern.
 struct DevModeSettingsView: View {
+    var showsHeader: Bool = true
+    var wrapsInScrollView: Bool = true
+    var horizontalPadding: CGFloat = Theme.Space.xl
+    var topPadding: CGFloat = Theme.Space.xl
+
     // Routing toggles — defaults match TransformerRouter.is*Enabled
     @AppStorage(TransformerRouter.Keys.devModeEnabled)
     var devModeEnabled: Bool = true
@@ -33,21 +38,33 @@ struct DevModeSettingsView: View {
     var screenshotContextEnabled: Bool = true
 
     // Trigger tester
-    @State private var triggerInput: String = "voiceflow create insert mock rows for users table"
+    @State private var triggerInput: String = "verba create insert mock rows for users table"
     @State private var probeOutput: String = ""
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                header
-                routingCard
-                contextCard
-                triggerTesterCard
-                probeCard
+        if wrapsInScrollView {
+            ScrollView {
+                content
             }
-            .padding(Theme.Space.xl)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            content
         }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            if showsHeader {
+                header
+            }
+            routingCard
+            contextCard
+            triggerTesterCard
+            probeCard
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.top, topPadding)
+        .padding(.bottom, Theme.Space.xl)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Header
@@ -68,11 +85,11 @@ struct DevModeSettingsView: View {
 
     private var routingCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionTitle("Routing", subtitle: "What VoiceFlow does with your dictation")
+            sectionTitle("Routing", subtitle: "What \(AppBrand.name) does with your dictation")
 
             toggleRow(
                 title: "Enable Dev Mode triggers",
-                subtitle: "Allow phrases like \u{201C}voiceflow create…\u{201D} and \u{201C}voiceflow prompt…\u{201D} to override polish.",
+                subtitle: "Allow phrases like \"verba create...\" and \"verba prompt...\" to override polish.",
                 isOn: $devModeEnabled,
                 badge: nil
             )
@@ -99,7 +116,7 @@ struct DevModeSettingsView: View {
                 title: "Agentic mode",
                 subtitle: "Lets the LLM call internal tools when generating. Slower, occasionally smarter.",
                 isOn: $agenticModeEnabled,
-                badge: "BETA",
+                badge: "EXPERIMENTAL",
                 disabled: !devModeEnabled
             )
         }
@@ -110,7 +127,7 @@ struct DevModeSettingsView: View {
 
     private var contextCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionTitle("Context Capture", subtitle: "What VoiceFlow knows about your screen")
+            sectionTitle("Context Capture", subtitle: "What \(AppBrand.name) knows about your screen")
 
             toggleRow(
                 title: "Capture frontmost app at hotkey-press",
@@ -139,7 +156,7 @@ struct DevModeSettingsView: View {
                 title: "Capture screenshot for smart context",
                 subtitle: "Uses Screen Recording and Groq Llama 4 Scout to summarize the active window for post-processing.",
                 isOn: $screenshotContextEnabled,
-                badge: "EXPERIMENT",
+                badge: "EXPERIMENTAL",
                 disabled: !contextCaptureEnabled
             )
         }
@@ -225,6 +242,7 @@ struct DevModeSettingsView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .vfClickableCursor()
 
                 Text("Click into another app first, then come back here and press.")
                     .font(.system(size: 11))
@@ -279,12 +297,7 @@ struct DevModeSettingsView: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(disabled ? Theme.textTertiary : Theme.textPrimary)
                     if let badge = badge {
-                        Text(badge)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Theme.accent))
+                        VFBadge(label: badge, style: badgeStyle(for: badge))
                     }
                 }
                 Text(subtitle)
@@ -293,9 +306,20 @@ struct DevModeSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
-            Toggle("", isOn: isOn)
-                .labelsHidden()
+            VFSwitch(isOn: isOn)
                 .disabled(disabled)
+                .opacity(disabled ? 0.45 : 1)
+        }
+    }
+
+    private func badgeStyle(for badge: String) -> VFBadgeStyle {
+        switch badge.uppercased() {
+        case "EXPERIMENT", "EXPERIMENTAL":
+            return .experimental
+        case "BETA":
+            return .feature
+        default:
+            return .plan
         }
     }
 
@@ -321,9 +345,9 @@ struct DevModeSettingsView: View {
     // MARK: - Logic
 
     private func triggerLabel(for transcript: String) -> String {
-        if TriggerWords.isDevCreate(transcript) { return "voiceflow create → DeveloperModeProfile" }
-        if TriggerWords.isPromptEngineer(transcript) { return "voiceflow prompt → PromptEngineerProfile" }
-        if TriggerWords.isRewrite(transcript) { return "voiceflow rewrite → RewriteProfile" }
+        if TriggerWords.isDevCreate(transcript) { return "verba create → DeveloperModeProfile" }
+        if TriggerWords.isPromptEngineer(transcript) { return "verba prompt → PromptEngineerProfile" }
+        if TriggerWords.isRewrite(transcript) { return "verba rewrite → RewriteProfile" }
         return "(none — would route to standard cleanup)"
     }
 

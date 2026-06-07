@@ -3,15 +3,16 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$PROJECT_DIR/build/DerivedData"
-APP_NAME="VoiceFlow"
+PROJECT_NAME="VoiceFlow"
+APP_NAME="Verba"
 BUILT_APP="$BUILD_DIR/Build/Products/Debug/$APP_NAME.app"
 INSTALLED_APP="/Applications/$APP_NAME.app"
 
 cd "$PROJECT_DIR"
 
 xcodebuild \
-  -project "$APP_NAME.xcodeproj" \
-  -scheme "$APP_NAME" \
+  -project "$PROJECT_NAME.xcodeproj" \
+  -scheme "$PROJECT_NAME" \
   -configuration Debug \
   -derivedDataPath "$BUILD_DIR" \
   build

@@ -13,61 +13,81 @@ struct RunLogView: View {
     @ObservedObject var runStore: RunStore
     @State private var selectedRunID: UUID?
     @State private var showClearConfirm = false
+    @State private var pendingDeleteRunID: UUID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
+        ZStack {
+            VStack(alignment: .leading, spacing: 0) {
+                header
 
-            if runStore.summaries.isEmpty {
-                emptyState
-            } else {
-                runList
+                if runStore.summaries.isEmpty {
+                    emptyState
+                } else {
+                    runList
+                }
+            }
+            .frame(maxWidth: 960, alignment: .top)
+            .padding(.horizontal, Theme.Layout.contentHPad)
+            .padding(.top, 36)
+            .padding(.bottom, 48)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Theme.mainContent)
+
+            if showClearConfirm {
+                Color.black.opacity(0.28)
+                    .ignoresSafeArea()
+                    .onTapGesture { showClearConfirm = false }
+                VFConfirmDialog(
+                    title: "Clear all run history?",
+                    message: "This will delete all saved audio and transcripts. This cannot be undone.",
+                    confirmLabel: "Yes, clear it",
+                    onCancel: { showClearConfirm = false },
+                    onConfirm: {
+                        runStore.clearAll()
+                        selectedRunID = nil
+                        showClearConfirm = false
+                    }
+                )
+            }
+
+            if let pendingDeleteRunID {
+                Color.black.opacity(0.28)
+                    .ignoresSafeArea()
+                    .onTapGesture { self.pendingDeleteRunID = nil }
+                VFConfirmDialog(
+                    title: "Delete this run?",
+                    message: "This removes the saved audio, transcript, and pipeline trace for this dictation.",
+                    confirmLabel: "Yes, delete it",
+                    onCancel: { self.pendingDeleteRunID = nil },
+                    onConfirm: {
+                        if selectedRunID == pendingDeleteRunID { selectedRunID = nil }
+                        runStore.deleteRun(id: pendingDeleteRunID)
+                        self.pendingDeleteRunID = nil
+                    }
+                )
             }
         }
-        .background(Theme.mainContent)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            HStack(alignment: .center, spacing: Theme.Space.sm) {
                 Text("Run Log")
-                    .font(.system(size: 26, weight: .semibold, design: .serif))
+                    .font(.vfPageTitle)
                     .foregroundColor(Theme.textPrimary)
-                Text(retentionCaption)
-                    .font(.system(size: 13))
-                    .foregroundColor(Theme.textSecondary)
-            }
-            Spacer()
-            Button {
-                showClearConfirm = true
-            } label: {
-                Text("Clear history")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(runStore.summaries.isEmpty ? Theme.textTertiary : .white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
-                            .fill(runStore.summaries.isEmpty ? Theme.divider : Theme.danger)
-                    )
-            }
-            .buttonStyle(.plain)
-            .disabled(runStore.summaries.isEmpty)
-            .alert("Clear all run history?", isPresented: $showClearConfirm) {
-                Button("Cancel", role: .cancel) {}
-                Button("Clear All", role: .destructive) {
-                    runStore.clearAll()
-                    selectedRunID = nil
+                VFBadge(label: "Local", style: .plan)
+                Spacer()
+                VFButton(title: "Clear history", icon: "trash", style: .destructive, isCompact: true, isDisabled: runStore.summaries.isEmpty) {
+                    showClearConfirm = true
                 }
-            } message: {
-                Text("This will delete all saved audio and transcripts. This cannot be undone.")
             }
+            Text(retentionCaption)
+                .font(.vfCallout)
+                .foregroundColor(Theme.textSecondary)
         }
-        .padding(.horizontal, Theme.Space.xl)
-        .padding(.top, Theme.Space.xl)
-        .padding(.bottom, Theme.Space.lg)
+        .padding(.bottom, Theme.Space.xl)
     }
 
     /// Caption explaining current retention. `runStore.maxRuns` is `Int?`:
@@ -89,10 +109,10 @@ struct RunLogView: View {
                 .font(.system(size: 36))
                 .foregroundColor(Theme.textTertiary)
             Text("No runs yet")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.vfBodyMedium)
                 .foregroundColor(Theme.textPrimary)
             Text("Hold fn anywhere to start dictating. Each run will appear here with its full pipeline trace.")
-                .font(.system(size: 12))
+                .font(.vfCallout)
                 .foregroundColor(Theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
@@ -117,14 +137,11 @@ struct RunLogView: View {
                             }
                         },
                         onDelete: {
-                            if selectedRunID == summary.id { selectedRunID = nil }
-                            runStore.deleteRun(id: summary.id)
+                            pendingDeleteRunID = summary.id
                         }
                     )
                 }
             }
-            .padding(.horizontal, Theme.Space.xl)
-            .padding(.bottom, Theme.Space.xl)
         }
     }
 }
@@ -137,10 +154,6 @@ struct RunRowView: View {
     let runStore: RunStore
     let onToggle: () -> Void
     let onDelete: () -> Void
-    @State private var showDeleteConfirm = false
-    @State private var showRetryConfirm = false
-    @State private var downloadFlash: String?
-
     private var statusColor: Color {
         switch summary.status {
         case .success:  return Theme.success
@@ -153,81 +166,45 @@ struct RunRowView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header row — always visible
             HStack(spacing: 12) {
-                // Status pill — tiny vertical bar in the status color
-                RoundedRectangle(cornerRadius: 2, style: .continuous)
-                    .fill(statusColor)
-                    .frame(width: 3, height: 36)
-
                 VStack(alignment: .leading, spacing: 2) {
                     Text(formattedDate(summary.createdAt))
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.vfCaption)
                         .foregroundColor(Theme.textPrimary)
                     Text(summary.previewText.isEmpty ? "—" : summary.previewText)
-                        .font(.system(size: 12))
+                        .font(.vfCallout)
                         .foregroundColor(Theme.textSecondary)
                         .lineLimit(1)
                 }
 
                 Spacer()
 
+                statusBadge
+
                 Text(formattedDuration(summary.durationSeconds))
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.vfKeyLabelSm)
                     .foregroundColor(Theme.textTertiary)
 
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundColor(Theme.textTertiary)
 
-                // Three-dot row menu — replaces the standalone trash button.
-                // Wispr-Flow shape: one icon, opens a Menu with all per-row
-                // actions inside. Less visual chrome on every row, more
-                // affordances available when you actually need them.
-                Menu {
-                    Button {
-                        retryTranscript()
-                    } label: {
-                        Label("Retry transcript", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(summary.status == .failed)
-
-                    Button {
-                        downloadAudio()
-                    } label: {
-                        Label("Download audio", systemImage: "arrow.down.circle")
-                    }
-
-                    Divider()
-
-                    Button(role: .destructive) {
-                        showDeleteConfirm = true
-                    } label: {
-                        Label("Delete transcript", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(Theme.textTertiary)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .alert("Delete this run?", isPresented: $showDeleteConfirm) {
-                    Button("Cancel", role: .cancel) {}
-                    Button("Delete", role: .destructive) { onDelete() }
-                }
+                VFActionMenu(
+                    actions: transcriptActions,
+                    iconColor: Theme.textTertiary,
+                    buttonSize: 22
+                )
             }
             .contentShape(Rectangle())
             .onTapGesture { onToggle() }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .vfClickableCursor()
+            .padding(.horizontal, Theme.Space.xl)
+            .frame(minHeight: Theme.Layout.listRowHeight)
 
             // Expanded detail
             if isExpanded {
-                Divider().background(Theme.divider).padding(.horizontal, 16)
+                Divider().background(Theme.divider).padding(.horizontal, Theme.Space.xl)
                 RunDetailView(runID: summary.id, runStore: runStore)
-                    .padding(16)
+                    .padding(Theme.Space.xl)
             }
         }
         .background(
@@ -238,6 +215,52 @@ struct RunRowView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
                 .strokeBorder(Theme.divider, lineWidth: 1)
         )
+    }
+
+    private var statusBadge: some View {
+        Text(statusLabel)
+            .font(.vfBadge)
+            .foregroundColor(statusColor)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.RadiusExtra.xs, style: .continuous)
+                    .fill(statusColor.opacity(0.12))
+            )
+    }
+
+    private var transcriptActions: [VFActionMenuAction] {
+        [
+            VFActionMenuAction(
+                icon: "arrow.clockwise",
+                label: "Retry transcript",
+                isDisabled: summary.status == .failed
+            ) {
+                retryTranscript()
+            },
+            VFActionMenuAction(
+                icon: "arrow.down.circle",
+                label: "Download audio"
+            ) {
+                downloadAudio()
+            },
+            .divider(),
+            VFActionMenuAction(
+                icon: "trash",
+                label: "Delete transcript",
+                isDestructive: true
+            ) {
+                onDelete()
+            }
+        ]
+    }
+
+    private var statusLabel: String {
+        switch summary.status {
+        case .success: return "Saved"
+        case .failed: return "Failed"
+        case .noSpeech: return "No speech"
+        }
     }
 
     private func formattedDate(_ date: Date) -> String {
@@ -279,7 +302,7 @@ struct RunRowView: View {
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let stem = "VoiceFlow_\(formatter.string(from: summary.createdAt))"
+        let stem = "\(AppBrand.name)_\(formatter.string(from: summary.createdAt))"
         var dest = downloads.appendingPathComponent("\(stem).wav")
 
         // Avoid clobbering — append a counter if a same-named file exists.
@@ -325,7 +348,7 @@ struct RunDetailView: View {
             } else {
                 ProgressView("Loading…")
                     .controlSize(.small)
-                    .tint(Theme.accent)
+                    .tint(Theme.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .center)
             }
         }
@@ -381,8 +404,8 @@ struct RunDetailView: View {
                 pipelineStage(number: 3, title: "Post-Process") {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 6) {
-                            chip(post.mode, color: Theme.accent)
-                            chip(post.style, color: Color(red: 0.580, green: 0.345, blue: 0.722))
+                            chip(post.mode, color: Theme.textPrimary)
+                            chip(post.style, color: Theme.interactive)
                             if post.droppedLanguageGuardTriggered {
                                 chip("guard triggered", color: Theme.warning)
                             }
@@ -404,10 +427,10 @@ struct RunDetailView: View {
                                 label: {
                                     Text("Show prompt")
                                         .font(.system(size: 11, weight: .semibold))
-                                        .foregroundColor(Theme.accent)
+                                        .foregroundColor(Theme.textPrimary)
                                 }
                             )
-                            .tint(Theme.accent)
+                            .tint(Theme.textPrimary)
                         }
 
                         codeBlock(post.finalText.isEmpty ? "(empty — filtered)" : post.finalText)
@@ -469,10 +492,10 @@ struct RunDetailView: View {
                         label: {
                             Text("Show prompt")
                                 .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(Theme.accent)
+                                .foregroundColor(Theme.textPrimary)
                         }
                     )
-                    .tint(Theme.accent)
+                    .tint(Theme.textPrimary)
 
                     Text(summary.text)
                         .font(.system(size: 12))
@@ -499,9 +522,10 @@ struct RunDetailView: View {
             Button(action: togglePlayback) {
                 Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
                     .font(.system(size: 26))
-                    .foregroundColor(Theme.accent)
+                    .foregroundColor(Theme.textPrimary)
             }
             .buttonStyle(.plain)
+            .vfClickableCursor()
 
             Text(formatDuration(audioPlayer?.duration ?? 0))
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -515,6 +539,7 @@ struct RunDetailView: View {
                     .foregroundColor(Theme.textTertiary)
             }
             .buttonStyle(.plain)
+            .vfClickableCursor()
             .help("Copy final text to clipboard")
         }
         .onAppear { preparePlayer(for: run) }
@@ -574,7 +599,7 @@ struct RunDetailView: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundColor(.white)
                     .frame(width: 20, height: 20)
-                    .background(Circle().fill(Theme.accent))
+                    .background(Circle().fill(Theme.textPrimary))
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(Theme.textPrimary)

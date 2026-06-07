@@ -243,7 +243,7 @@ enum NotchPillScreenGeometry {
         case .panelError(let title, _, _):
             return compactErrorLabel(for: title)
         case .panelHover:
-            return "VoiceFlow"
+            return AppBrand.name
         case .idle, .proximity:
             return "Ready"
         }
@@ -451,8 +451,8 @@ final class NotchPillWindow: NSPanel {
         flash(
             message: "Microphone access denied - check System Settings",
             title: "Microphone access denied",
-            desc: "VoiceFlow needs microphone access to listen. Grant access in System Settings > Privacy.",
-            tip: "Go to System Settings > Privacy & Security > Microphone and enable VoiceFlow.",
+            desc: "\(AppBrand.name) needs microphone access to listen. Grant access in System Settings > Privacy.",
+            tip: "Go to System Settings > Privacy & Security > Microphone and enable \(AppBrand.name).",
             durationSeconds: durationSeconds
         )
     }
@@ -461,7 +461,7 @@ final class NotchPillWindow: NSPanel {
         flash(
             message: "No input field detected - use Cmd+V to paste",
             title: "No input field detected",
-            desc: "VoiceFlow couldn't find an active text field. Use Cmd+V to paste the transcription manually.",
+            desc: "\(AppBrand.name) couldn't find an active text field. Use Cmd+V to paste the transcription manually.",
             tip: "Click into any text field first, then hold Fn to dictate directly into it.",
             durationSeconds: durationSeconds
         ) {

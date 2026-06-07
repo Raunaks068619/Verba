@@ -477,6 +477,7 @@ struct FloatingChipView: View {
                 floatingIcon("clock.arrow.circlepath")
             }
             .buttonStyle(.plain)
+            .vfClickableCursor()
             .help("Open Run Log")
             .opacity(hovering ? 1 : 0)
             .scaleEffect(hovering ? 1 : 0.4, anchor: .trailing)
@@ -494,15 +495,14 @@ struct FloatingChipView: View {
                     Capsule(style: .continuous)
                         .strokeBorder(Color.floatingChipBorder, lineWidth: hovering ? 1 : 0.5)
                     if hovering {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.white)
+                        VFBrandLogo(size: 16, variant: .dark, cornerRadius: 4)
                             .transition(.opacity)
                     }
                 }
                 .frame(width: hovering ? 64 : 40, height: hovering ? 24 : 4)
             }
             .buttonStyle(.plain)
+            .vfClickableCursor()
             .help(model.hasAllPermissions ? "Drag to move" : "Click to fix permissions")
 
             Button {
@@ -511,6 +511,7 @@ struct FloatingChipView: View {
                 floatingIcon("gearshape.fill")
             }
             .buttonStyle(.plain)
+            .vfClickableCursor()
             .help("Open Settings")
             .opacity(hovering ? 1 : 0)
             .scaleEffect(hovering ? 1 : 0.4, anchor: .leading)
@@ -604,6 +605,7 @@ struct FloatingChipView: View {
             .floatingChipGlass()
         }
         .buttonStyle(.plain)
+        .vfClickableCursor()
     }
 
     private func floatingIcon(_ systemName: String) -> some View {

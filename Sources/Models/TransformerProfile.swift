@@ -121,7 +121,7 @@ struct TransformerOutput {
 // MARK: - Trigger words
 
 /// Centralized phrase detection. Whisper's transcription of these triggers
-/// is fuzzy ("voice flow create", "wide flow create") — match generously.
+/// is fuzzy ("verba create", "verbal create") — match generously.
 ///
 /// **Intent**: detect whether a transcript is a command-style invocation
 /// vs. ordinary dictation. False positives steal the user's transcript;
@@ -131,6 +131,8 @@ enum TriggerWords {
     /// Single source of truth for every dev-mode trigger phrase. Order matters:
     /// we strip the LONGEST matching prefix first.
     static let devCreatePrefixes: [String] = [
+        "verba create",
+        "verbal create",
         "voiceflow create",
         "voice flow create",
         "wideflow create",
@@ -139,12 +141,16 @@ enum TriggerWords {
     ]
 
     static let promptEngineerPrefixes: [String] = [
+        "verba prompt",
+        "verbal prompt",
         "voiceflow prompt",
         "voice flow prompt",
         "vf prompt",
     ]
 
     static let rewritePrefixes: [String] = [
+        "verba rewrite",
+        "verbal rewrite",
         "voiceflow rewrite",
         "voice flow rewrite",
         "vf rewrite",
@@ -169,10 +175,10 @@ enum TriggerWords {
     /// Strip the longest matching trigger prefix and return the remainder.
     /// If no trigger matches, returns the input verbatim.
     ///
-    /// e.g. "voiceflow create insert mock rows" → "insert mock rows"
+    /// e.g. "verba create insert mock rows" → "insert mock rows"
     static func strip(_ transcript: String) -> String {
         let allPrefixes = devCreatePrefixes + promptEngineerPrefixes + rewritePrefixes
-        // Sort by length DESC so "voiceflow create" wins over "voiceflow"
+        // Sort by length DESC so the longest trigger wins.
         // for `wideflow create`-shaped input.
         let sorted = allPrefixes.sorted { $0.count > $1.count }
 
@@ -204,8 +210,7 @@ enum TriggerWords {
     private static func normalize(_ s: String) -> String {
         let lowered = s.lowercased()
         let trimmed = lowered.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Strip a leading punctuation char Whisper sometimes prepends
-        // (e.g. ", voiceflow create...").
+        // Strip a leading punctuation char Whisper sometimes prepends.
         let leading = trimmed.drop { ",.;:!?".contains($0) }
         return String(leading).trimmingCharacters(in: .whitespaces)
     }

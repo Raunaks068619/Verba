@@ -6,8 +6,8 @@ import AppKit
 /// **Routing priorities** (first match wins):
 /// 1. Hotkey identity — `.promptEngineer` always uses PromptEngineerProfile,
 ///    no matter what the transcript says.
-/// 2. Trigger words — "voiceflow create" → DeveloperModeProfile,
-///    "voiceflow prompt" → PromptEngineerProfile, etc.
+/// 2. Trigger words — "verba create" → DeveloperModeProfile,
+///    "verba prompt" → PromptEngineerProfile, etc.
 /// 3. Magic word match — registry hit takes precedence over standard cleanup.
 /// 4. System action phrases — "open Claude", "open Claude and type ..."
 /// 5. Surface + dev-mode toggle — IDE/terminal users with dev mode ON get
@@ -50,7 +50,7 @@ final class TransformerRouter {
         /// Master toggle for Dev Mode features (triggers, var recognition,
         /// file tagging). Default ON — the user explicitly opted in by
         /// installing/enabling these features; OFF-by-default means they
-        /// dictate "voiceflow create…" and nothing happens, which feels
+        /// dictate "verba create..." and nothing happens, which feels
         /// broken.
         static let devModeEnabled = "dev_mode_enabled"
         /// Whether magic-word matching runs. Default ON; no-op when the
@@ -114,11 +114,11 @@ final class TransformerRouter {
         }
 
         // 2. Trigger words. Only when dev mode is enabled — we don't want
-        // a casual mention of "voiceflow create" in a Slack message to
+            // a casual mention of "verba create" in a Slack message to
         // hijack the transcript when the user hasn't opted in.
         if isDevModeEnabled {
             if TriggerWords.isDevCreate(transcript) {
-                trace.append("Trigger: voiceflow create → DeveloperModeProfile (\(isAgenticModeEnabled ? "agentic" : "single-call"))")
+                trace.append("Trigger: verba create → DeveloperModeProfile (\(isAgenticModeEnabled ? "agentic" : "single-call"))")
                 if isAgenticModeEnabled {
                     return RouterDecision(
                         profile: AgenticDeveloperModeProfile(llm: llm),
@@ -133,7 +133,7 @@ final class TransformerRouter {
                 )
             }
             if TriggerWords.isPromptEngineer(transcript) {
-                trace.append("Trigger: voiceflow prompt → PromptEngineerProfile")
+                trace.append("Trigger: verba prompt → PromptEngineerProfile")
                 return RouterDecision(
                     profile: PromptEngineerProfile(llm: llm),
                     trace: trace,

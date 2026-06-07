@@ -7,7 +7,7 @@ struct NotchPillView: View {
     private let lanePadding: CGFloat = 10
     private let statusTrailingPadding: CGFloat = 18
     private let stateWidthBreathingRoom: CGFloat = 8
-    private let notchMarkWidth: CGFloat = 14
+    private let notchMarkWidth: CGFloat = 18
     private let statusSpacing: CGFloat = 6
     private let statusFontSize: CGFloat = 10
     private let recordingMeterWidth: CGFloat = 38
@@ -165,6 +165,7 @@ struct NotchPillView: View {
                 .frame(width: pillWidth, height: rowHeight)
                 .contentShape(Rectangle())
                 .onTapGesture(perform: handleTap)
+                .vfClickableCursor()
         } else {
             HStack(spacing: 0) {
                 leftVisibleLane
@@ -178,6 +179,7 @@ struct NotchPillView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture(perform: handleTap)
+            .vfClickableCursor()
         }
     }
 
@@ -340,6 +342,7 @@ struct NotchPillView: View {
                             .frame(width: 58, height: 22)
                     }
                     .buttonStyle(NotchErrorPrimaryButtonStyle(accent: presentation.accent))
+                    .vfClickableCursor()
                 } else {
                     Button {
                         retryAfterError()
@@ -349,6 +352,7 @@ struct NotchPillView: View {
                             .frame(width: 74, height: 22)
                     }
                     .buttonStyle(NotchErrorPrimaryButtonStyle(accent: presentation.accent))
+                    .vfClickableCursor()
 
                     Button {
                         openRunLogFromError()
@@ -362,6 +366,7 @@ struct NotchPillView: View {
                         .frame(width: 58, height: 22)
                     }
                     .buttonStyle(NotchErrorSecondaryButtonStyle())
+                    .vfClickableCursor()
                 }
             }
             .padding(.bottom, 7)
@@ -453,6 +458,7 @@ struct NotchPillView: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(NotchPanelIconButtonStyle())
+            .vfClickableCursor()
             .help("Settings")
 
             Button {
@@ -463,6 +469,7 @@ struct NotchPillView: View {
                     .frame(width: 24, height: 24)
             }
             .buttonStyle(NotchPanelIconButtonStyle())
+            .vfClickableCursor()
             .help("Close")
         }
         .padding(.leading, 12)
@@ -486,10 +493,8 @@ struct NotchPillView: View {
 
     private var emptyLogRow: some View {
         HStack(spacing: 8) {
-            Image(systemName: "waveform")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(NotchPillPalette.mark.opacity(0.42))
-                .frame(width: 15)
+            VFBrandLogo(size: 15, variant: .dark, cornerRadius: 4)
+                .opacity(0.72)
 
             Text("No runs yet")
                 .font(.system(size: 11, weight: .regular))
@@ -530,6 +535,7 @@ struct NotchPillView: View {
             .background(NotchPanelRowBackground())
         }
         .buttonStyle(.plain)
+        .vfClickableCursor()
     }
 
     private var panelFeatureRow: some View {
@@ -558,6 +564,7 @@ struct NotchPillView: View {
             .frame(height: 37)
         }
         .buttonStyle(NotchPanelFeatureButtonStyle())
+        .vfClickableCursor()
     }
 
     private var notchShape: NotchPillBaseShape {
@@ -570,7 +577,7 @@ struct NotchPillView: View {
     private var leftVisibleLane: some View {
         HStack(spacing: statusSpacing) {
             VFLogoView()
-                .frame(width: notchMarkWidth, height: 12)
+                .frame(width: notchMarkWidth, height: 14)
 
             if showsStatusLabel {
                 Text(statusLabel)
@@ -618,6 +625,7 @@ struct NotchPillView: View {
                 .frame(width: 22, height: 22)
         }
         .buttonStyle(NotchPanelCircleButtonStyle())
+        .vfClickableCursor()
         .help("Close panel")
     }
 
@@ -751,7 +759,7 @@ struct NotchPillView: View {
         case .panelTranscript:
             return "Listening"
         case .panelHover:
-            return "VoiceFlow"
+            return AppBrand.name
         case .idle, .proximity:
             return model.hasAllPermissions ? "Ready" : "Setup"
         }
@@ -860,9 +868,9 @@ struct NotchPillView: View {
         case .panelError(let title, _, _):
             return helpText(forError: title)
         case .thinking:
-            return "VoiceFlow is processing"
+            return "\(AppBrand.name) is processing"
         case .listening:
-            return "VoiceFlow is listening"
+            return "\(AppBrand.name) is listening"
         case .done:
             return "Done"
         case .handsFree:
@@ -870,7 +878,7 @@ struct NotchPillView: View {
         case .idle, .proximity, .panelHover:
             return model.hasAllPermissions ? "Open quick panel" : "Click to fix permissions"
         case .panelTranscript:
-            return "VoiceFlow is listening"
+            return "\(AppBrand.name) is listening"
         }
     }
 

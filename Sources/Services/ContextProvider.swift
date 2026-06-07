@@ -357,7 +357,7 @@ final class ContextProvider {
     private func truncate(_ s: String) -> String {
         guard s.count > Self.maxSelectionChars else { return s }
         let head = s.prefix(Self.maxSelectionChars)
-        return String(head) + "\n…[truncated by VoiceFlow — selection exceeded 8K chars]"
+        return String(head) + "\n...[truncated by \(AppBrand.name), selection exceeded 8K chars]"
     }
 }
 

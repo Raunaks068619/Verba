@@ -94,7 +94,10 @@ final class MemoryChatService: ObservableObject {
 
     /// Answer a question. Returns the assistant turn (text + source
     /// run IDs) so the UI can render citations.
-    func ask(_ question: String, conversation: [ConversationTurn] = []) async throws -> AssistantTurn {
+    func ask(
+        _ question: String,
+        conversation: [ConversationTurn] = []
+    ) async throws -> AssistantTurn {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else {
             return AssistantTurn(
@@ -104,7 +107,7 @@ final class MemoryChatService: ObservableObject {
             )
         }
 
-        let runCount = memory.runCount()
+        let runCount = memory.itemCount(includeAgentContext: false)
         guard runCount > 0 else {
             return AssistantTurn(
                 text: "You haven't dictated anything yet. Hold Fn and speak — once you've got a few transcripts I can answer questions about them.",
@@ -136,19 +139,29 @@ final class MemoryChatService: ObservableObject {
                 .map { idx, runID in (runID: runID, score: 1.0 - Double(idx) * 0.01) }
         } else {
             // 1. Semantic candidates.
-            let semantic = await semanticCandidates(for: retrievalQuery)
+            let semantic = await semanticCandidates(for: retrievalQuery, includeAgentContext: false)
             // 2. Lexical candidates.
-            let lexical = memory.searchFTS(query: retrievalQuery, limit: topKPerChannel)
+            let lexical = memory.searchFTS(
+                query: retrievalQuery,
+                limit: topKPerChannel,
+                includeAgentContext: false
+            )
             // 3. Merge.
             var merged = mergeScores(semantic: semantic, lexical: lexical)
             // 4. Entity boost.
-            applyEntityBoost(question: retrievalQuery, scores: &merged)
+            applyEntityBoost(
+                question: retrievalQuery,
+                scores: &merged,
+                includeAgentContext: false
+            )
             // 5. Recency decay.
             applyRecencyDecay(scores: &merged)
 
             if merged.isEmpty {
                 usedRecencyFallback = true
-                topHits = memory.recentRuns(limit: finalK).map { (runID: $0.id, score: 0.0) }
+                topHits = memory
+                    .recentRuns(limit: finalK, includeAgentContext: false)
+                    .map { (runID: $0.id, score: 0.0) }
             } else {
                 let positive = merged
                     .filter { $0.value > 0.001 }
@@ -157,7 +170,9 @@ final class MemoryChatService: ObservableObject {
                     .map { (runID: $0.key, score: $0.value) }
                 if positive.isEmpty {
                     usedRecencyFallback = true
-                    topHits = memory.recentRuns(limit: finalK).map { (runID: $0.id, score: 0.0) }
+                    topHits = memory
+                        .recentRuns(limit: finalK, includeAgentContext: false)
+                        .map { (runID: $0.id, score: 0.0) }
                 } else {
                     usedRecencyFallback = false
                     topHits = Array(positive)
@@ -193,7 +208,10 @@ final class MemoryChatService: ObservableObject {
     /// Cosine-similarity ranked candidates. Computed entirely in Swift
     /// against the embeddings table. For corpora below ~10K runs this
     /// is microsecond-fast; beyond that we'd want sqlite-vec / HNSW.
-    private func semanticCandidates(for question: String) async -> [(runID: String, score: Double)] {
+    private func semanticCandidates(
+        for question: String,
+        includeAgentContext: Bool
+    ) async -> [(runID: String, score: Double)] {
         // Best-effort: if embeddings aren't ready, just return empty
         // and let lexical carry the retrieval.
         let qVec: [Float]
@@ -204,7 +222,7 @@ final class MemoryChatService: ObservableObject {
             return []
         }
 
-        let rows = memory.allEmbeddings()
+        let rows = memory.allEmbeddings(includeAgentContext: includeAgentContext)
         guard !rows.isEmpty else { return [] }
 
         // Only compare against vectors with the SAME dim (different
@@ -255,17 +273,22 @@ final class MemoryChatService: ObservableObject {
     /// question. We don't pre-tokenize the entities — they're matched as
     /// case-insensitive substrings, so "kubectl" in the question hits
     /// the "kubectl" entity even if a runQuestion typed "Kubectl".
-    private func applyEntityBoost(question: String, scores: inout [String: Double]) {
+    private func applyEntityBoost(
+        question: String,
+        scores: inout [String: Double],
+        includeAgentContext: Bool
+    ) {
         let qLower = question.lowercased()
-        let entities = memory.allEntities(limit: 500)
+        let entities = memory.allEntities(limit: 500, includeAgentContext: includeAgentContext)
         for entity in entities {
             let label = entity.label.lowercased()
             guard label.count >= 3, qLower.contains(label) else { continue }
-            for runID in memory.runIDs(forEntity: entity.id) {
+            for runID in memory.runIDs(forEntity: entity.id, includeAgentContext: includeAgentContext) {
                 scores[runID, default: 0] += 0.3
             }
         }
     }
+
 
     /// Multiply scores by an exponential decay based on age. Acts as a
     /// tiebreak between items with otherwise-equal merged scores.
@@ -283,6 +306,9 @@ final class MemoryChatService: ObservableObject {
         let runID: String
         let text: String
         let createdAt: Date
+        let sourceLabel: String
+        let title: String?
+        let folderDisplayName: String?
         let score: Double
     }
 
@@ -297,6 +323,9 @@ final class MemoryChatService: ObservableObject {
                 runID: hit.runID,
                 text: text,
                 createdAt: run.createdAt,
+                sourceLabel: run.sourceDisplayName,
+                title: run.title,
+                folderDisplayName: run.folderDisplayName,
                 score: hit.score
             )
         }
@@ -315,18 +344,23 @@ final class MemoryChatService: ObservableObject {
         formatter.dateFormat = "MMM d"
         let context = sources.enumerated().map { idx, s in
             let date = formatter.string(from: s.createdAt)
+            let title = s.title.flatMap { $0.isEmpty ? nil : $0 }
+            let folder = s.folderDisplayName.flatMap { $0.isEmpty ? nil : $0 }
+            let details = [s.sourceLabel, folder, title]
+                .compactMap { $0 }
+                .joined(separator: " · ")
             let body = s.text.prefix(800)
-            return "[Source \(idx + 1) · \(date)]\n\(body)"
+            return "[Source \(idx + 1) · \(date) · \(details)]\n\(body)"
         }.joined(separator: "\n\n---\n\n")
 
         let retrievalNote = usedRecencyFallback
-            ? "The user's question didn't strongly match any specific transcript. The sources below are simply their most recent dictations. Give a brief, honest summary of what they appear to be about — don't pretend to directly answer the question."
-            : "Answer the user's question using ONLY the transcripts. Be specific. Cite sources inline as [1], [2], etc."
+            ? "The user's question didn't strongly match any specific memory item. The sources below are simply the most recent items in scope. Give a brief, honest summary of what they appear to be about, and don't pretend to directly answer the question."
+            : "Answer the user's question using ONLY the provided memory sources. Be specific. Cite sources inline as [1], [2], etc."
 
         let conversationBlock = Self.conversationPromptBlock(conversation)
 
         let system = """
-        You are VoiceFlow's memory assistant. You help the user recall \
+        You are \(AppBrand.name)'s memory assistant. You help the user recall \
         what they've dictated.
 
         \(retrievalNote)

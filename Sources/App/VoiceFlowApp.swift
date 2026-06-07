@@ -19,7 +19,7 @@ struct VoiceFlowApp: App {
             MenuBarView()
                 .environmentObject(appDelegate)
         } label: {
-            Image(systemName: "waveform.circle")
+            VFMenuBarBrandIcon()
         }
 
         // Placeholder Settings scene so ⌘, behaves natively.
@@ -344,17 +344,17 @@ final class PermissionService: ObservableObject {
         let appPath = Bundle.main.bundleURL.path
 
         if appPath.contains("/Volumes/") {
-            return "VoiceFlow is running from a DMG volume. Drag it to /Applications and launch that copy so permissions persist."
+            return "\(AppBrand.name) is running from a DMG volume. Drag it to /Applications and launch that copy so permissions persist."
         }
 
         if appPath.contains("/DerivedData/") || appPath.contains("/build/") {
-            return "VoiceFlow is running from an Xcode build folder. Permissions can look mismatched; use a single /Applications install for testing."
+            return "\(AppBrand.name) is running from an Xcode build folder. Permissions can look mismatched; use a single /Applications install for testing."
         }
 
         let bundleId = Bundle.main.bundleIdentifier ?? "com.voiceflow.app"
         let runningCount = NSWorkspace.shared.runningApplications.filter { $0.bundleIdentifier == bundleId }.count
         if runningCount > 1 {
-            return "Multiple VoiceFlow instances are running. Quit all duplicates and relaunch one copy from /Applications."
+            return "Multiple \(AppBrand.name) instances are running. Quit all duplicates and relaunch one copy from /Applications."
         }
 
         return nil
@@ -365,6 +365,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var settingsWindow: NSWindow?
     var onboardingWindow: NSWindow?
     var mainWindow: NSWindow?
+    var notesWindow: FloatingNotesWindow?
     /// Persistent feedback surfaces. Only one is visible at a time,
     /// controlled by Settings -> Feedback Surface.
     var notchPill: NotchPillWindow?
@@ -385,6 +386,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var permissionService = PermissionService.shared
     let recordingState = RecordingStateStore()
     let runStore = RunStore.shared
+    let noteStore = VoiceNoteStore.shared
     lazy var runRecorder = RunRecorder(store: runStore)
 
     /// Captured at hotkey-press (startRecording), consumed at result-time.
@@ -472,6 +474,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Regular activation: full app with Dock icon + proper window.
         // Menu bar extra still registered for quick access.
         NSApp.setActivationPolicy(.regular)
+        configureDockIcon()
         configureDefaultSettings()
 
         audioRecorder = AudioRecorder()
@@ -483,6 +486,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // 3s median utterance is a free ~10% latency win.
         whisperService?.prewarmConnections()
         textInjector = TextInjector()
+        noteStore.observeDictationRuns(from: runStore)
         // Suppression hook: fires after a successful transcript when it
         // can't be injected directly (VoiceFlow foreground, no text input
         // focused, etc.). The transcript is already on the clipboard, so
@@ -545,11 +549,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // Onboarding gate — three-way decision based on prefs + live TCC state:
         //
         //   1. has_completed_onboarding=false  → first-launch ever, run full
-        //      Welcome flow.
+        //      onboarding from the Features page.
         //   2. has_completed_onboarding=true BUT any required permission is
         //      missing → user reinstalled, OS-upgraded, or revoked a perm
         //      between sessions. Jump straight to the Permissions step so
-        //      they can re-grant without re-watching the welcome screens.
+        //      they can re-grant without re-watching the feature screens.
         //   3. has_completed_onboarding=true and all perms granted → silent
         //      menu-bar launch.
         //
@@ -683,6 +687,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // etc. — no unsolicited window on every launch.
     }
 
+    private func configureDockIcon() {
+        guard let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+              let image = NSImage(contentsOf: iconURL) else {
+            return
+        }
+
+        NSApp.applicationIconImage = roundedDockIcon(from: image)
+    }
+
+    private func roundedDockIcon(from image: NSImage) -> NSImage {
+        let size = NSSize(width: 1024, height: 1024)
+        let cornerRadius = size.width * 0.18
+
+        return NSImage(size: size, flipped: false) { rect in
+            NSGraphicsContext.current?.imageInterpolation = .high
+            NSColor.clear.setFill()
+            rect.fill()
+
+            NSBezierPath(
+                roundedRect: rect,
+                xRadius: cornerRadius,
+                yRadius: cornerRadius
+            ).addClip()
+
+            image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
+    }
+
     /// Re-opens the main dashboard when the user clicks the Dock icon
     /// after having closed the window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -708,10 +741,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             // Users speaking Hindi, Marathi, or English all get a useful
             // result immediately without configuring anything.
             UserDefaults.standard.set(TranscriptOutputStyle.cleanHinglish.rawValue, forKey: "output_mode")
+        } else if UserDefaults.standard.string(forKey: "output_mode") == TranscriptOutputStyle.clean.rawValue {
+            UserDefaults.standard.set(TranscriptOutputStyle.translateEnglish.rawValue, forKey: "output_mode")
         }
+        let polishDefaultMigrationKey = "did_migrate_processing_mode_default_to_polish_v1"
         if UserDefaults.standard.string(forKey: "processing_mode") == nil {
-            UserDefaults.standard.set(TranscriptProcessingMode.rewrite.rawValue, forKey: "processing_mode")
+            UserDefaults.standard.set(TranscriptProcessingMode.dictation.rawValue, forKey: "processing_mode")
+        } else if !UserDefaults.standard.bool(forKey: polishDefaultMigrationKey),
+                  UserDefaults.standard.string(forKey: "processing_mode") == TranscriptProcessingMode.rewrite.rawValue {
+            UserDefaults.standard.set(TranscriptProcessingMode.dictation.rawValue, forKey: "processing_mode")
         }
+        UserDefaults.standard.set(true, forKey: polishDefaultMigrationKey)
         if let storedPolishBackend = UserDefaults.standard.string(forKey: PolishBackend.userDefaultsKey),
            PolishBackend.legacyGroqModelIds.contains(storedPolishBackend) {
             print("VoiceFlow: migrating polish_backend_id '\(storedPolishBackend)' → '\(PolishBackend.defaultIdGroq)'")
@@ -789,7 +829,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return .terminateNow
         }
 
-        print("Blocked unexpected terminate request; use Quit VoiceFlow to exit.")
+        print("Blocked unexpected terminate request; use Quit \(AppBrand.name) to exit.")
         return .terminateCancel
     }
     
@@ -936,6 +976,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 onOpenSettings: { [weak self] in
                     self?.openSettings()
                 },
+                onOpenFloatingNotes: { [weak self] in
+                    self?.openFloatingNotesWindow(hideMainWindow: true)
+                },
                 onQuit: { [weak self] in
                     self?.allowTermination = true
                     NSApplication.shared.terminate(nil)
@@ -943,7 +986,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             )
             let hostingController = NSHostingController(rootView: dashboard)
             mainWindow = NSWindow(contentViewController: hostingController)
-            mainWindow?.title = "VoiceFlow"
+            mainWindow?.title = AppBrand.name
             mainWindow?.styleMask = [.titled, .closable, .miniaturizable, .resizable]
 
             // First-launch default. We compute against the visible screen so
@@ -977,17 +1020,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    func openFloatingNotesWindow(hideMainWindow: Bool = false) {
+        if notesWindow == nil {
+            notesWindow = FloatingNotesWindow(store: noteStore)
+        }
+        if hideMainWindow {
+            mainWindow?.orderOut(nil)
+        }
+        notesWindow?.show()
+    }
     
-    /// Open the main window with the Settings tab pre-selected.
+    /// Open the main window and present the Settings modal.
     ///
-    /// Was: a separate popup NSWindow hosting the legacy `SettingsView`.
-    /// That created a SECOND settings UI duplicating everything in the main
-    /// dashboard's Settings tab — same fields, different visual treatment,
-    /// guaranteed drift over time. Now everything lives in one surface.
-    ///
-    /// Tab selection happens via NotificationCenter (`VoiceFlow.SelectTab`)
-    /// rather than mutating a shared store — keeps MainDashboardView's
-    /// state self-contained, just adds a listener at the body level.
+    /// Settings is intentionally a modal overlay, not a dashboard content tab:
+    /// the dashboard remains the user's working surface while settings behaves
+    /// like a focused configuration panel.
     func openSettings() {
         openMainWindow()
         // Slight delay — NSWindow ordering needs to settle before SwiftUI
@@ -1007,8 +1055,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     /// chip's permissions warning click). `initialStep` deep-links to a
     /// specific wizard step — the permissions-warning chip uses this to
     /// jump straight to the Permissions screen instead of forcing the
-    /// user to click through Welcome.
-    func openOnboardingIfNeeded(force: Bool = false, initialStep: OnboardingStep = .welcome) {
+    /// user to click through the Features page.
+    func openOnboardingIfNeeded(force: Bool = false, initialStep: OnboardingStep = .features) {
         let hasCompleted = UserDefaults.standard.bool(forKey: "has_completed_onboarding")
         if !force && hasCompleted {
             return
@@ -1056,11 +1104,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 }
             )
             let hostingController = NSHostingController(rootView: onboardingView)
+            let onboardingSize = OnboardingView.windowSize
 
             onboardingWindow = NSWindow(contentViewController: hostingController)
-            onboardingWindow?.title = "Welcome to VoiceFlow"
+            onboardingWindow?.title = "Welcome to \(AppBrand.name)"
             onboardingWindow?.styleMask = [.titled, .closable]
-            onboardingWindow?.setContentSize(NSSize(width: 600, height: 640))
+            onboardingWindow?.contentMinSize = onboardingSize
+            onboardingWindow?.contentMaxSize = onboardingSize
+            onboardingWindow?.setContentSize(onboardingSize)
             onboardingWindow?.center()
         }
 
@@ -1614,6 +1665,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         // continue to work.
         let trimmedRaw = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedRaw.isEmpty else {
+            self.persistAndInject(
+                text: fallbackFinalText,
+                session: session,
+                targetBundleIdentifier: context.frontmostBundleID
+            )
+            return
+        }
+
+        if mode == .promptEngineer {
+            session.attachProfile(
+                kind: .promptEngineer,
+                trace: ["Transform mode: Prompt Engineer", "Handled by primary post-processing pass"]
+            )
             self.persistAndInject(
                 text: fallbackFinalText,
                 session: session,
