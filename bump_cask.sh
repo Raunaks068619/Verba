@@ -12,7 +12,7 @@ fi
 VERSION=$1
 VF_ROOT=/Users/raunaksingh/Documents/VoiceFlow
 DMG="$VF_ROOT/VoiceFlow-Beta.dmg"
-CASK="$VF_ROOT/homebrew-voiceflow/Casks/voiceflow.rb"
+CASK="$VF_ROOT/homebrew-voiceflow/Casks/verba.rb"
 BUILD_SCRIPT="$VF_ROOT/build_beta_dmg.sh"
 
 echo "=== 1/4  Rebuild DMG ==="

@@ -1,14 +1,14 @@
-# <h1> <img alt="VoiceFlow logo" width="250" align="center" src="https://github.com/user-attachments/assets/63dc5cc4-92fa-4b1e-8ddb-9b40ed2bc4ee" /> </br>VoiceFlow </h1>
+# <h1> <img alt="Verba logo" width="250" align="center" src="https://github.com/user-attachments/assets/63dc5cc4-92fa-4b1e-8ddb-9b40ed2bc4ee" /> </br>Verba </h1>
 
 
 > [!IMPORTANT]
 > ### `v0.6.0` is here — Memory that works.
 >
-> VoiceFlow is a macOS menu-bar voice typing app for people who think faster
+> Verba is a macOS menu-bar voice typing app for people who think faster
 > than they type. Hold `Fn`, speak naturally, release, and your words land in
 > the focused app as clean text.
 >
-> → [**Download the latest DMG**](https://github.com/Raunaks068619/VoiceFlow/releases/latest) · [Install with Homebrew](#-quickstart) · [Fix permissions](#-permissions)
+> → [**Download the latest DMG**](https://github.com/Raunaks068619/Verba/releases/latest) · [Install with Homebrew](#-quickstart) · [Fix permissions](#-permissions)
 
 > **The local-first voice typing app for macOS.** Fast English dictation on the
 > free Groq path, multilingual/Hinglish workflows with your OpenAI key, local
@@ -20,18 +20,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Raunaks068619/VoiceFlow/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=ffd700&logo=github&logoColor=white" /></a>
-  <a href="https://github.com/Raunaks068619/VoiceFlow/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=2ecc71&logo=github&logoColor=white" /></a>
-  <a href="https://github.com/Raunaks068619/VoiceFlow/issues"><img alt="Issues" src="https://img.shields.io/github/issues/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=ff6b6b&logo=github&logoColor=white" /></a>
-  <a href="https://github.com/Raunaks068619/VoiceFlow/pulls"><img alt="Pull Requests" src="https://img.shields.io/github/issues-pr/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=9b59b6&logo=github&logoColor=white" /></a>
-  <a href="https://github.com/Raunaks068619/VoiceFlow/graphs/contributors"><img alt="Contributors" src="https://img.shields.io/github/contributors/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=3498db&logo=github&logoColor=white" /></a>
-  <a href="https://github.com/Raunaks068619/VoiceFlow/commits/main"><img alt="Commit activity" src="https://img.shields.io/github/commit-activity/m/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=e67e22&logo=git&logoColor=white" /></a>
-  <a href="https://github.com/Raunaks068619/VoiceFlow/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Raunaks068619/VoiceFlow?style=for-the-badge&labelColor=0d1117&color=8e44ad&logo=git&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/Verba/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Raunaks068619/Verba?style=for-the-badge&labelColor=0d1117&color=ffd700&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/Verba/network/members"><img alt="Forks" src="https://img.shields.io/github/forks/Raunaks068619/Verba?style=for-the-badge&labelColor=0d1117&color=2ecc71&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/Verba/issues"><img alt="Issues" src="https://img.shields.io/github/issues/Raunaks068619/Verba?style=for-the-badge&labelColor=0d1117&color=ff6b6b&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/Verba/pulls"><img alt="Pull Requests" src="https://img.shields.io/github/issues-pr/Raunaks068619/Verba?style=for-the-badge&labelColor=0d1117&color=9b59b6&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/Verba/graphs/contributors"><img alt="Contributors" src="https://img.shields.io/github/contributors/Raunaks068619/Verba?style=for-the-badge&labelColor=0d1117&color=3498db&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/Verba/commits/main"><img alt="Commit activity" src="https://img.shields.io/github/commit-activity/m/Raunaks068619/Verba?style=for-the-badge&labelColor=0d1117&color=e67e22&logo=git&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/Verba/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Raunaks068619/Verba?style=for-the-badge&labelColor=0d1117&color=8e44ad&logo=git&logoColor=white" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Raunaks068619/VoiceFlow/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-latest%20DMG-ff6b35?style=flat-square&logo=github&logoColor=white" /></a>
-  <a href="https://github.com/Raunaks068619/VoiceFlow/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/Raunaks068619/VoiceFlow?style=flat-square&color=blueviolet&label=release&display_name=tag" /></a>
+  <a href="https://github.com/Raunaks068619/Verba/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-latest%20DMG-ff6b35?style=flat-square&logo=github&logoColor=white" /></a>
+  <a href="https://github.com/Raunaks068619/Verba/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/Raunaks068619/Verba?style=flat-square&color=blueviolet&label=release&display_name=tag" /></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" /></a>
   <a href="#-quickstart"><img alt="Quickstart" src="https://img.shields.io/badge/quickstart-brew%20install-brightgreen?style=flat-square" /></a>
   <a href="#-permissions"><img alt="Permissions" src="https://img.shields.io/badge/permissions-mic%20%2B%20accessibility%20%2B%20input%20monitoring-111111?style=flat-square&logo=apple&logoColor=white" /></a>
@@ -50,7 +50,7 @@ macOS dictation is fine until you need real workflow speed: a global hotkey,
 cleanup that respects intent, bilingual output, reliable insertion, and a way
 to debug what the model actually heard.
 
-VoiceFlow is built for that gap:
+Verba is built for that gap:
 
 - **Speak anywhere** — Slack, Cursor, Notes, Mail, browser fields, terminals.
 - **Choose the output** — raw transcript, cleaned text, Hinglish, or English translation.
@@ -132,12 +132,12 @@ VoiceFlow is built for that gap:
 ### Homebrew install
 
 ```bash
-brew install --cask raunaks068619/voiceflow/voiceflow
+brew install --cask raunaks068619/verba/verba
 ```
 
 ### Manual DMG install
 
-1. Download the latest DMG from [Releases](https://github.com/Raunaks068619/VoiceFlow/releases/latest).
+1. Download the latest DMG from [Releases](https://github.com/Raunaks068619/Verba/releases/latest).
 2. Drag `VoiceFlow.app` to `/Applications`.
 3. Right-click → Open on first launch.
 4. If macOS blocks the unsigned build, run:
@@ -154,11 +154,11 @@ open /Applications/VoiceFlow.app
 2. Select the `VoiceFlow` scheme.
 3. Run `Product -> Run`.
 
-VoiceFlow runs as a menu-bar app, so it intentionally does not show a Dock icon.
+Verba runs as a menu-bar app, so it intentionally does not show a Dock icon.
 
 ## 🔐 Permissions
 
-VoiceFlow needs three macOS permissions:
+Verba needs three macOS permissions:
 
 | Permission | Why it is needed |
 |---|---|
@@ -194,7 +194,7 @@ If `Fn` does not work:
 | `Hinglish` | Hindi + English speech normalized into readable Latin script. |
 | `English` | Translate spoken input into natural English. |
 
-Processing mode changes how much VoiceFlow rewrites:
+Processing mode changes how much Verba rewrites:
 
 - `Dictation` preserves your phrasing.
 - `Rewrite` tightens grammar and collapses restarts.
@@ -219,7 +219,7 @@ Provider behavior:
 
 Magic Words are voice-triggered command aliases. They are designed for short,
 repeatable phrases like `git wip`, `list namespaces`, `describe pods`, or a
-personal workflow command you want VoiceFlow to expand reliably.
+personal workflow command you want Verba to expand reliably.
 
 The app exposes them as a first-class dashboard tab so supported commands are
 discoverable instead of hidden in code.
